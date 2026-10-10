@@ -1,0 +1,33 @@
+# ---- 第三方代码：不入库，按 README 的命令自行克隆 ----
+# 官方 SDK（pip -e 安装源，rohand.py 依赖它）
+ohand_serial_sdk_python/
+# 官方示例（摄像头手势 demo 等，参考用）
+roh_demos/
+
+# ---- 运行期产物 ----
+gui.log
+logs/
+contact_out/
+emi_out/
+task_logs/
+calibration_capture.mp4
+calibration_capture.json
+# Downloaded MediaPipe assets (optional; see README.md)
+models/hand_landmarker.task
+models/victory.jpg
+*.lnk
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- 虚拟环境（若有人在本目录建 venv）----
+.venv/
+venv/
+
+# ---- 编辑器 ----
+.vscode/
+.idea/
+*.swp
+
+# 说明：calibration.json 是**这只手**的实测标定数据，故意入库。
+# 换一只手请重跑 calibrate.py 覆盖它。

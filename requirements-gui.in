@@ -1,0 +1,14 @@
+# Windows x64 / CPython 3.11.14. Compile from this directory with uv pip compile.
+# The SDK pins python-can and pyserial; keep its local source editable.
+-e ./ohand_serial_sdk_python
+python-can==4.5.0
+pyserial==3.5
+numpy>=1.26,<3
+mujoco>=3.3,<4
+# The application uses the MediaPipe Tasks API from this version.
+mediapipe==1.0.1
+# Only one OpenCV distribution should provide cv2. MediaPipe requires contrib.
+opencv-contrib-python>=4.11,<5
+# Enumerate Windows camera names with the matching OpenCV device indices.
+cv2-enumerate-cameras>=1.1,<2
+pillow>=10,<13

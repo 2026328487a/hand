@@ -1,0 +1,2705 @@
+{
+  "device": {
+    "protocol": "3.0",
+    "firmware": "3.1.79"
+  },
+  "open_pose": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    728
+  ],
+  "speed": 120,
+  "steps": 9,
+  "motors": {
+    "thumb_bend": {
+      "motor": 0,
+      "name": "thumb_bend",
+      "name_cn": "拇指弯曲",
+      "pos_limit": [
+        4619,
+        21119
+      ],
+      "angle_at_min_cmd": 33.54,
+      "angle_at_max_cmd": -4.66,
+      "angle_range_deg": [
+        -4.66,
+        33.54
+      ],
+      "max_hysteresis_deg": 0.04999999999999982,
+      "max_current_ma": 133,
+      "records": [
+        {
+          "pos_read": 0,
+          "angle_deg": 33.54,
+          "abs_enc": 4619,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 0,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 8190,
+          "angle_deg": 29.46,
+          "abs_enc": 6681,
+          "current_ma": 0,
+          "all_pos": [
+            8190,
+            0,
+            0,
+            0,
+            0,
+            732
+          ],
+          "all_angle": [
+            29.46,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            1.0
+          ],
+          "cmd": 8192,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 16392,
+          "angle_deg": 25.32,
+          "abs_enc": 8746,
+          "current_ma": 0,
+          "all_pos": [
+            16392,
+            0,
+            0,
+            0,
+            0,
+            732
+          ],
+          "all_angle": [
+            25.32,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            1.0
+          ],
+          "cmd": 16384,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 24538,
+          "angle_deg": 21.11,
+          "abs_enc": 10797,
+          "current_ma": 15,
+          "all_pos": [
+            24538,
+            0,
+            0,
+            0,
+            0,
+            732
+          ],
+          "all_angle": [
+            21.11,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            1.0
+          ],
+          "cmd": 24576,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 32724,
+          "angle_deg": 16.72,
+          "abs_enc": 12858,
+          "current_ma": 54,
+          "all_pos": [
+            32724,
+            0,
+            0,
+            0,
+            0,
+            732
+          ],
+          "all_angle": [
+            16.72,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            1.0
+          ],
+          "cmd": 32768,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 40953,
+          "angle_deg": 12.06,
+          "abs_enc": 14930,
+          "current_ma": 27,
+          "all_pos": [
+            40953,
+            0,
+            0,
+            0,
+            0,
+            732
+          ],
+          "all_angle": [
+            12.06,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            1.0
+          ],
+          "cmd": 40959,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 49116,
+          "angle_deg": 7.09,
+          "abs_enc": 16988,
+          "current_ma": 68,
+          "all_pos": [
+            49116,
+            0,
+            0,
+            0,
+            0,
+            732
+          ],
+          "all_angle": [
+            7.09,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            1.0
+          ],
+          "cmd": 49151,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57270,
+          "angle_deg": 1.64,
+          "abs_enc": 19038,
+          "current_ma": 133,
+          "all_pos": [
+            57270,
+            0,
+            0,
+            0,
+            0,
+            732
+          ],
+          "all_angle": [
+            1.64,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            1.0
+          ],
+          "cmd": 57343,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 65527,
+          "angle_deg": -4.66,
+          "abs_enc": 21117,
+          "current_ma": 132,
+          "all_pos": [
+            65527,
+            0,
+            0,
+            0,
+            0,
+            732
+          ],
+          "all_angle": [
+            -4.66,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            1.0
+          ],
+          "cmd": 65535,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57341,
+          "angle_deg": 1.59,
+          "abs_enc": 19056,
+          "current_ma": 0,
+          "all_pos": [
+            57341,
+            0,
+            0,
+            0,
+            0,
+            732
+          ],
+          "all_angle": [
+            1.59,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            1.0
+          ],
+          "cmd": 57343,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 49147,
+          "angle_deg": 7.07,
+          "abs_enc": 16993,
+          "current_ma": 0,
+          "all_pos": [
+            49147,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            7.07,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 49151,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 40938,
+          "angle_deg": 12.06,
+          "abs_enc": 14928,
+          "current_ma": 0,
+          "all_pos": [
+            40938,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            12.06,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 40959,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 32771,
+          "angle_deg": 16.69,
+          "abs_enc": 12870,
+          "current_ma": 0,
+          "all_pos": [
+            32771,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            16.69,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 32768,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 24586,
+          "angle_deg": 21.09,
+          "abs_enc": 10809,
+          "current_ma": 0,
+          "all_pos": [
+            24586,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            21.09,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 24576,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 16392,
+          "angle_deg": 25.32,
+          "abs_enc": 8746,
+          "current_ma": 0,
+          "all_pos": [
+            16392,
+            0,
+            0,
+            0,
+            0,
+            724
+          ],
+          "all_angle": [
+            25.32,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 16384,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 8178,
+          "angle_deg": 29.46,
+          "abs_enc": 6678,
+          "current_ma": 0,
+          "all_pos": [
+            8178,
+            0,
+            0,
+            0,
+            0,
+            724
+          ],
+          "all_angle": [
+            29.46,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 8192,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 0,
+          "angle_deg": 33.54,
+          "abs_enc": 4618,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            724
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 0,
+          "direction": "down",
+          "settled": true
+        }
+      ]
+    },
+    "index": {
+      "motor": 1,
+      "name": "index",
+      "name_cn": "食指",
+      "pos_limit": [
+        5184,
+        25884
+      ],
+      "angle_at_min_cmd": 173.83,
+      "angle_at_max_cmd": 100.47,
+      "angle_range_deg": [
+        100.47,
+        173.83
+      ],
+      "max_hysteresis_deg": 0.04999999999998295,
+      "max_current_ma": 71,
+      "records": [
+        {
+          "pos_read": 0,
+          "angle_deg": 173.83,
+          "abs_enc": 5184,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            724
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 0,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 8162,
+          "angle_deg": 162.32,
+          "abs_enc": 7765,
+          "current_ma": 52,
+          "all_pos": [
+            0,
+            8162,
+            0,
+            0,
+            0,
+            724
+          ],
+          "all_angle": [
+            33.54,
+            162.32,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 8192,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 16352,
+          "angle_deg": 152.05,
+          "abs_enc": 10349,
+          "current_ma": 71,
+          "all_pos": [
+            0,
+            16352,
+            0,
+            0,
+            0,
+            724
+          ],
+          "all_angle": [
+            33.54,
+            152.05,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 16384,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 24555,
+          "angle_deg": 142.69,
+          "abs_enc": 12941,
+          "current_ma": 53,
+          "all_pos": [
+            0,
+            24555,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            142.69,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 24576,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 32733,
+          "angle_deg": 133.99,
+          "abs_enc": 15524,
+          "current_ma": 52,
+          "all_pos": [
+            0,
+            32733,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            133.99,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 32768,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 40932,
+          "angle_deg": 125.66,
+          "abs_enc": 18114,
+          "current_ma": 37,
+          "all_pos": [
+            36,
+            40932,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.52,
+            125.66,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 40959,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 49120,
+          "angle_deg": 117.48,
+          "abs_enc": 20702,
+          "current_ma": 25,
+          "all_pos": [
+            4,
+            49120,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            117.48,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 49151,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57319,
+          "angle_deg": 109.2,
+          "abs_enc": 23290,
+          "current_ma": 27,
+          "all_pos": [
+            0,
+            57319,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            109.2,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 57343,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 65522,
+          "angle_deg": 100.47,
+          "abs_enc": 25881,
+          "current_ma": 53,
+          "all_pos": [
+            0,
+            65522,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            100.47,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 65535,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57335,
+          "angle_deg": 109.19,
+          "abs_enc": 23294,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            57335,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            109.19,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 57343,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 49158,
+          "angle_deg": 117.45,
+          "abs_enc": 20711,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            49158,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            117.45,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 49151,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 40967,
+          "angle_deg": 125.62,
+          "abs_enc": 18124,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            40967,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            125.62,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 40959,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 32777,
+          "angle_deg": 133.95,
+          "abs_enc": 15537,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            32777,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            133.95,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 32768,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 24584,
+          "angle_deg": 142.66,
+          "abs_enc": 12949,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            24584,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            142.66,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 24576,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 16384,
+          "angle_deg": 152.01,
+          "abs_enc": 10359,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            16384,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            152.01,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 16384,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 8203,
+          "angle_deg": 162.27,
+          "abs_enc": 7775,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            8203,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            162.27,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 8192,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 16,
+          "angle_deg": 173.81,
+          "abs_enc": 5188,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            16,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.81,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 0,
+          "direction": "down",
+          "settled": true
+        }
+      ]
+    },
+    "middle": {
+      "motor": 2,
+      "name": "middle",
+      "name_cn": "中指",
+      "pos_limit": [
+        5461,
+        26361
+      ],
+      "angle_at_min_cmd": 171.68,
+      "angle_at_max_cmd": 98.62,
+      "angle_range_deg": [
+        98.62,
+        171.68
+      ],
+      "max_hysteresis_deg": 0.05000000000001137,
+      "max_current_ma": 75,
+      "records": [
+        {
+          "pos_read": 0,
+          "angle_deg": 171.68,
+          "abs_enc": 5461,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 0,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 8156,
+          "angle_deg": 160.44,
+          "abs_enc": 8064,
+          "current_ma": 50,
+          "all_pos": [
+            0,
+            0,
+            8156,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            160.44,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 8192,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 16374,
+          "angle_deg": 150.34,
+          "abs_enc": 10683,
+          "current_ma": 32,
+          "all_pos": [
+            0,
+            0,
+            16374,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            150.34,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 16384,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 24552,
+          "angle_deg": 141.14,
+          "abs_enc": 13291,
+          "current_ma": 35,
+          "all_pos": [
+            0,
+            0,
+            24552,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            141.14,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 24576,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 32736,
+          "angle_deg": 132.51,
+          "abs_enc": 15903,
+          "current_ma": 38,
+          "all_pos": [
+            0,
+            0,
+            32736,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            132.51,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 32768,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 40961,
+          "angle_deg": 124.17,
+          "abs_enc": 18524,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            40961,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            124.17,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 40959,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 49129,
+          "angle_deg": 115.98,
+          "abs_enc": 21129,
+          "current_ma": 14,
+          "all_pos": [
+            0,
+            19,
+            49129,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.8,
+            115.98,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 49151,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57323,
+          "angle_deg": 107.58,
+          "abs_enc": 23743,
+          "current_ma": 31,
+          "all_pos": [
+            0,
+            0,
+            57323,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            107.58,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 57343,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 65510,
+          "angle_deg": 98.62,
+          "abs_enc": 26354,
+          "current_ma": 75,
+          "all_pos": [
+            0,
+            0,
+            65510,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            98.62,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 65535,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57329,
+          "angle_deg": 107.58,
+          "abs_enc": 23744,
+          "current_ma": 1,
+          "all_pos": [
+            0,
+            0,
+            57329,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            107.58,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 57343,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 49148,
+          "angle_deg": 115.97,
+          "abs_enc": 21135,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            49148,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            115.97,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 49151,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 40945,
+          "angle_deg": 124.19,
+          "abs_enc": 18519,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            40945,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            124.19,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 40959,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 32774,
+          "angle_deg": 132.47,
+          "abs_enc": 15913,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            32774,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            132.47,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 32768,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 24590,
+          "angle_deg": 141.1,
+          "abs_enc": 13303,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            24590,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            141.1,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 24576,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 16393,
+          "angle_deg": 150.31,
+          "abs_enc": 10689,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            16393,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            150.31,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 16384,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 8200,
+          "angle_deg": 160.39,
+          "abs_enc": 8076,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            8200,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            160.39,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 8192,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 0,
+          "angle_deg": 171.68,
+          "abs_enc": 5461,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 0,
+          "direction": "down",
+          "settled": true
+        }
+      ]
+    },
+    "ring": {
+      "motor": 3,
+      "name": "ring",
+      "name_cn": "无名指",
+      "pos_limit": [
+        5632,
+        26032
+      ],
+      "angle_at_min_cmd": 172.09,
+      "angle_at_max_cmd": 100.25,
+      "angle_range_deg": [
+        100.25,
+        172.11
+      ],
+      "max_hysteresis_deg": 0.03999999999999204,
+      "max_current_ma": 35,
+      "records": [
+        {
+          "pos_read": 0,
+          "angle_deg": 172.09,
+          "abs_enc": 5632,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 0,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 8173,
+          "angle_deg": 160.93,
+          "abs_enc": 8176,
+          "current_ma": 27,
+          "all_pos": [
+            0,
+            0,
+            0,
+            8173,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            160.93,
+            174.7,
+            0.99
+          ],
+          "cmd": 8192,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 16371,
+          "angle_deg": 150.93,
+          "abs_enc": 10728,
+          "current_ma": 27,
+          "all_pos": [
+            0,
+            0,
+            0,
+            16371,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            150.93,
+            174.7,
+            0.99
+          ],
+          "cmd": 16384,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 24550,
+          "angle_deg": 141.81,
+          "abs_enc": 13274,
+          "current_ma": 27,
+          "all_pos": [
+            0,
+            0,
+            0,
+            24550,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            141.81,
+            174.7,
+            0.99
+          ],
+          "cmd": 24576,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 32748,
+          "angle_deg": 133.26,
+          "abs_enc": 15827,
+          "current_ma": 24,
+          "all_pos": [
+            0,
+            0,
+            0,
+            32748,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            133.26,
+            174.7,
+            0.99
+          ],
+          "cmd": 32768,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 40950,
+          "angle_deg": 125.06,
+          "abs_enc": 18379,
+          "current_ma": 35,
+          "all_pos": [
+            0,
+            0,
+            0,
+            40950,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            125.06,
+            174.7,
+            0.99
+          ],
+          "cmd": 40959,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 49129,
+          "angle_deg": 117.02,
+          "abs_enc": 20926,
+          "current_ma": 16,
+          "all_pos": [
+            0,
+            0,
+            0,
+            49129,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            117.02,
+            174.7,
+            0.99
+          ],
+          "cmd": 49151,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57321,
+          "angle_deg": 108.85,
+          "abs_enc": 23478,
+          "current_ma": 26,
+          "all_pos": [
+            0,
+            0,
+            0,
+            57321,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            108.85,
+            174.7,
+            0.99
+          ],
+          "cmd": 57343,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 65503,
+          "angle_deg": 100.25,
+          "abs_enc": 26023,
+          "current_ma": 31,
+          "all_pos": [
+            0,
+            0,
+            0,
+            65503,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            100.25,
+            174.7,
+            0.99
+          ],
+          "cmd": 65535,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57330,
+          "angle_deg": 108.84,
+          "abs_enc": 23478,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            57330,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            108.84,
+            174.7,
+            0.99
+          ],
+          "cmd": 57343,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 49158,
+          "angle_deg": 116.99,
+          "abs_enc": 20934,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            49158,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            116.99,
+            174.7,
+            0.99
+          ],
+          "cmd": 49151,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 40963,
+          "angle_deg": 125.05,
+          "abs_enc": 18383,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            40963,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            125.05,
+            174.7,
+            0.99
+          ],
+          "cmd": 40959,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 32758,
+          "angle_deg": 133.25,
+          "abs_enc": 15829,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            32758,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            133.25,
+            174.7,
+            0.99
+          ],
+          "cmd": 32768,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 24582,
+          "angle_deg": 141.77,
+          "abs_enc": 13284,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            24582,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            141.77,
+            174.7,
+            0.99
+          ],
+          "cmd": 24576,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 16384,
+          "angle_deg": 150.91,
+          "abs_enc": 10732,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            16384,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            150.91,
+            174.7,
+            0.99
+          ],
+          "cmd": 16384,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 8195,
+          "angle_deg": 160.91,
+          "abs_enc": 8183,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            8195,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            160.91,
+            174.7,
+            0.99
+          ],
+          "cmd": 8192,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 0,
+          "angle_deg": 172.11,
+          "abs_enc": 5628,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.11,
+            174.7,
+            0.99
+          ],
+          "cmd": 0,
+          "direction": "down",
+          "settled": true
+        }
+      ]
+    },
+    "little": {
+      "motor": 4,
+      "name": "little",
+      "name_cn": "小指",
+      "pos_limit": [
+        4811,
+        26111
+      ],
+      "angle_at_min_cmd": 174.7,
+      "angle_at_max_cmd": 98.94,
+      "angle_range_deg": [
+        98.94,
+        174.7
+      ],
+      "max_hysteresis_deg": 0.060000000000002274,
+      "max_current_ma": 68,
+      "records": [
+        {
+          "pos_read": 0,
+          "angle_deg": 174.7,
+          "abs_enc": 4811,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.11,
+            174.7,
+            0.99
+          ],
+          "cmd": 0,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 8172,
+          "angle_deg": 162.69,
+          "abs_enc": 7467,
+          "current_ma": 62,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            8172,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.1,
+            162.69,
+            0.99
+          ],
+          "cmd": 8192,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 16338,
+          "angle_deg": 152.06,
+          "abs_enc": 10122,
+          "current_ma": 50,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            16338,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.1,
+            152.06,
+            0.99
+          ],
+          "cmd": 16384,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 24556,
+          "angle_deg": 142.37,
+          "abs_enc": 12793,
+          "current_ma": 68,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            24556,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            142.37,
+            0.99
+          ],
+          "cmd": 24576,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 32758,
+          "angle_deg": 133.4,
+          "abs_enc": 15458,
+          "current_ma": 3,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            32758,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            133.4,
+            0.99
+          ],
+          "cmd": 32768,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 40930,
+          "angle_deg": 124.86,
+          "abs_enc": 18114,
+          "current_ma": 31,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            40930,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            124.86,
+            0.99
+          ],
+          "cmd": 40959,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 49133,
+          "angle_deg": 116.45,
+          "abs_enc": 20780,
+          "current_ma": 1,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            49133,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            116.45,
+            0.99
+          ],
+          "cmd": 49151,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57332,
+          "angle_deg": 107.93,
+          "abs_enc": 23445,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            57332,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            107.93,
+            0.99
+          ],
+          "cmd": 57343,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 65501,
+          "angle_deg": 98.94,
+          "abs_enc": 26100,
+          "current_ma": 12,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            65501,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            98.94,
+            0.99
+          ],
+          "cmd": 65535,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57335,
+          "angle_deg": 107.92,
+          "abs_enc": 23446,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            57335,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            107.92,
+            0.99
+          ],
+          "cmd": 57343,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 49148,
+          "angle_deg": 116.44,
+          "abs_enc": 20785,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            49148,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            116.44,
+            0.99
+          ],
+          "cmd": 49151,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 40955,
+          "angle_deg": 124.83,
+          "abs_enc": 18122,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            40955,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            124.83,
+            0.99
+          ],
+          "cmd": 40959,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 32764,
+          "angle_deg": 133.39,
+          "abs_enc": 15460,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            32764,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            133.39,
+            0.99
+          ],
+          "cmd": 32768,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 24574,
+          "angle_deg": 142.35,
+          "abs_enc": 12798,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            24574,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            142.35,
+            0.99
+          ],
+          "cmd": 24576,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 16393,
+          "angle_deg": 152.0,
+          "abs_enc": 10138,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            16393,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            152.0,
+            0.99
+          ],
+          "cmd": 16384,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 8200,
+          "angle_deg": 162.66,
+          "abs_enc": 7476,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            8200,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            162.66,
+            0.99
+          ],
+          "cmd": 8192,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 0,
+          "angle_deg": 174.7,
+          "abs_enc": 4811,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 0,
+          "direction": "down",
+          "settled": true
+        }
+      ]
+    },
+    "thumb_rot": {
+      "motor": 5,
+      "name": "thumb_rot",
+      "name_cn": "拇指旋转",
+      "pos_limit": [
+        2983,
+        19359
+      ],
+      "angle_at_min_cmd": 0.99,
+      "angle_at_max_cmd": 89.77,
+      "angle_range_deg": [
+        0.99,
+        89.77
+      ],
+      "max_hysteresis_deg": 0.06999999999999318,
+      "max_current_ma": 172,
+      "records": [
+        {
+          "pos_read": 728,
+          "angle_deg": 0.99,
+          "abs_enc": 2983,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            728
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            0.99
+          ],
+          "cmd": 0,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 8184,
+          "angle_deg": 11.21,
+          "abs_enc": 4868,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            8184
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            11.21
+          ],
+          "cmd": 8192,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 16376,
+          "angle_deg": 22.45,
+          "abs_enc": 6937,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            16376
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            22.45
+          ],
+          "cmd": 16384,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 24584,
+          "angle_deg": 33.7,
+          "abs_enc": 9011,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            24584
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            33.7
+          ],
+          "cmd": 24576,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 32736,
+          "angle_deg": 44.88,
+          "abs_enc": 11074,
+          "current_ma": 32,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            32736
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            44.88
+          ],
+          "cmd": 32768,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 40916,
+          "angle_deg": 56.09,
+          "abs_enc": 13139,
+          "current_ma": 49,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            40916
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            56.09
+          ],
+          "cmd": 40959,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 49120,
+          "angle_deg": 67.33,
+          "abs_enc": 15211,
+          "current_ma": 68,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            49120
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            67.33
+          ],
+          "cmd": 49151,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57311,
+          "angle_deg": 78.56,
+          "abs_enc": 17281,
+          "current_ma": 112,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            57311
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            78.56
+          ],
+          "cmd": 57343,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 65484,
+          "angle_deg": 89.77,
+          "abs_enc": 19347,
+          "current_ma": 172,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            65484
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            89.77
+          ],
+          "cmd": 65535,
+          "direction": "up",
+          "settled": true
+        },
+        {
+          "pos_read": 57331,
+          "angle_deg": 78.59,
+          "abs_enc": 17286,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            57331
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            78.59
+          ],
+          "cmd": 57343,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 49147,
+          "angle_deg": 67.37,
+          "abs_enc": 15218,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            49147
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            67.37
+          ],
+          "cmd": 49151,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 40967,
+          "angle_deg": 56.16,
+          "abs_enc": 13151,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            40967
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            56.16
+          ],
+          "cmd": 40959,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 32760,
+          "angle_deg": 44.91,
+          "abs_enc": 11077,
+          "current_ma": 0,
+          "all_pos": [
+            36,
+            0,
+            0,
+            0,
+            0,
+            32760
+          ],
+          "all_angle": [
+            33.52,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            44.91
+          ],
+          "cmd": 32768,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 24572,
+          "angle_deg": 33.68,
+          "abs_enc": 9008,
+          "current_ma": 0,
+          "all_pos": [
+            4,
+            0,
+            0,
+            0,
+            0,
+            24572
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            33.68
+          ],
+          "cmd": 24576,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 16380,
+          "angle_deg": 22.45,
+          "abs_enc": 6938,
+          "current_ma": 0,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            16380
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            22.45
+          ],
+          "cmd": 16384,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 8208,
+          "angle_deg": 11.25,
+          "abs_enc": 4873,
+          "current_ma": 28,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            8208
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            11.25
+          ],
+          "cmd": 8192,
+          "direction": "down",
+          "settled": true
+        },
+        {
+          "pos_read": 760,
+          "angle_deg": 1.04,
+          "abs_enc": 2990,
+          "current_ma": 121,
+          "all_pos": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            760
+          ],
+          "all_angle": [
+            33.54,
+            173.83,
+            171.68,
+            172.09,
+            174.7,
+            1.04
+          ],
+          "cmd": 0,
+          "direction": "down",
+          "settled": true
+        }
+      ]
+    }
+  },
+  "factory_cali": {
+    "start_pos": [
+      4619,
+      5184,
+      5461,
+      5632,
+      4811,
+      2799
+    ],
+    "end_pos": [
+      21119,
+      25884,
+      26361,
+      26032,
+      26111,
+      19359
+    ],
+    "thumb_root_pos": [
+      2799,
+      18439,
+      19359
+    ]
+  }
+}

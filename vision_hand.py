@@ -341,6 +341,7 @@ class VisionSource(threading.Thread):
         self._last_frame = None
         self._latency_ms = 0.0
         self._camera = None
+        self._sequence = 0
 
     def set_sync(self, sync):
         with self._lock:
@@ -372,6 +373,8 @@ class VisionSource(threading.Thread):
             age = float("inf") if self._last_detection is None else now - self._last_detection
             frame_age = float("inf") if self._last_frame is None else now - self._last_frame
             return dict(state=self._state, detected=self.detected,
+                        norms=None if self.norms is None else self.norms.copy(),
+                        sequence=self._sequence, captured_at=self._last_detection,
                         fps=self.fps_real, latency_ms=self._latency_ms,
                         frame_age=frame_age, detection_age=age,
                         control_ready=(self._ready_ok and not self._stop_event.is_set()
@@ -459,6 +462,7 @@ class VisionSource(threading.Thread):
                     self._state = "tracking" if self.detected else "missing"
                     if self.detected:
                         self._last_detection = captured
+                        self._sequence += 1
                         if self.sync is not None and processed - captured < self.LOST_TIMEOUT:
                             self.sync.set_target(norms)
                     elif was_detected:

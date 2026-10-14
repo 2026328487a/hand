@@ -15,10 +15,9 @@
 
 布局:
     [顶部] 连接面板: 连接/断开按钮 + 状态灯 + 手信息
-    [左侧] 安全按钮: 张开 / 急停(手指停住,不收回)
-    [中间] 自适应抓握任务流程与单次结果
-    [右侧] 摄像头 / 视频实时预览 + 电机状态面板
-    [底部] 日志
+    [上方] 摄像头预览 / 内嵌三维手模型，连接与安全按钮始终可见
+    [中间] 仿真、视觉输入与关节控制
+    [下方] 自适应抓握任务 + 电机状态；日志可折叠
 """
 
 from __future__ import annotations
@@ -37,6 +36,7 @@ from tkinter import ttk
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from calibration import Calibration                     # noqa: E402
+from gui_startup import configure_window_scaling         # noqa: E402
 from gestures import GESTURES, play                     # noqa: E402
 from rohand import MOTORS, MOTOR_CN, N_MOTORS, HandError, ROHand  # noqa: E402
 from task_mode import (DEFAULT_CLOSE_NORM, DEFAULT_CONTACT_MA,
@@ -44,14 +44,14 @@ from task_mode import (DEFAULT_CLOSE_NORM, DEFAULT_CONTACT_MA,
 
 # 仿真模块依赖上级目录的 MuJoCo 模型。GUI 本身仍然应该能在没有仿真工作区
 # 时启动，所以这里故意延迟失败；仿真面板会显示具体原因，而不影响真机面板。
+from control_core import (DOF_CN, MotionController, SafeSender,
+                          align_control_to_hand)
+from joint_mapping import reorder_real_to_sim
 try:                                                       # noqa: E402
-    from sim_sync import (DOF_CN, FollowSender, SimSync,
-                          align_sim_to_hand, reorder_real_to_sim)
+    from sim_sync import SimSync
     SIM_IMPORT_ERROR = None
-except Exception as _sim_exc:                              # noqa: E402
-    DOF_CN = ("食指", "中指", "无名指", "小指", "拇指旋转", "拇指弯曲")
-    FollowSender = SimSync = align_sim_to_hand = None
-    reorder_real_to_sim = None
+except Exception as _sim_exc:
+    SimSync = None
     SIM_IMPORT_ERROR = _sim_exc
 
 # 视觉模块再额外依赖 mediapipe + opencv + 模型文件。它比仿真更容易缺,所以
@@ -68,6 +68,9 @@ except Exception as _vis_exc:                              # noqa: E402
 CODES = ("connect", "disconnect", "stop", "open")
 FOLLOW_HZ = 30
 FOLLOW_SPEED = 140
+CONTROL_SOURCES = {"手动滑杆": "manual", "视觉输入": "vision", "仿真调试": "follow"}
+CONTROL_LABELS = {"off": "已暂停", "manual": "手动滑杆控制中",
+                  "vision": "视觉控制中", "follow": "仿真驱动真机"}
 
 
 def step_progress_to_str(i: int, total: int, norms, pose, contact) -> str:
@@ -80,8 +83,8 @@ def step_progress_to_str(i: int, total: int, norms, pose, contact) -> str:
 class HandWorker(threading.Thread):
     """独占手的后台线程。主线程通过 put(cmd) 发命令,通过 events 收反馈。
 
-    cmd 可以是 CODES 里的字符串,或一个手势名。手势名会解析成 GESTURES[name]
-    并经 play() 执行。命令串行,前一个完成了才做下一个。
+    连接、任务和模式命令串行执行；关节输入合并为每路最新目标。
+    急停撤销此前排队的请求，连续控制和抓握任务独占控制权。
     """
 
     def __init__(self, cal: Calibration, commands, events):
@@ -93,10 +96,21 @@ class HandWorker(threading.Thread):
         self._idle = False
         self._connected = False
         self.sim = None
-        self.sim_mode = "off"
+        self.controller = MotionController()
+        self.control_source = "manual"
+        self.preview_mode = "target"
+        self._input_lock = threading.Lock()
+        self._input_epoch = 0
+        self._generation = 0
+        self._manual_pending = {}
+        self._control_t = time.monotonic()
+        self._vision_seq = -1
+        self._vision_after = 0.0
+        self._feedback_pose = None
+        self._task_running = False
+        self.control_mode = "off"
         self.sender = None
         self.follow_speed = FOLLOW_SPEED
-        self._reverse_t = 0.0
         self.vision = None          # 视频驱动源,见 _start_vision
         self._pose_t = 0.0
         self._last_stalled = ()     # 上次上报的「顶住被钉住」的电机
@@ -110,53 +124,102 @@ class HandWorker(threading.Thread):
         return self._connected
 
     def put(self, cmd):
-        if cmd in ("stop", "disconnect", "__quit__"):
-            self._task_cancel.set()
-        self.commands.put(cmd)
+        with self._input_lock:
+            if cmd in ("stop", "disconnect", "__quit__"):
+                self._generation += 1
+                self._input_epoch += 1
+                self._manual_pending.clear()
+                self._task_cancel.set()
+                self.commands.put(cmd)
+                return
+            if isinstance(cmd, tuple) and cmd and cmd[0] == "manual_target":
+                _, epoch, index, value = cmd
+                if (epoch == self._input_epoch and not self._task_cancel.is_set()
+                        and not self._task_running and self._active_grasp is None):
+                    self._manual_pending[index] = float(value)
+                return
+            if (self._task_running or self._active_grasp is not None) and (
+                    isinstance(cmd, tuple) and cmd and cmd[0] in ("control_mode", "select_source")):
+                self._send_sim("warn", "抓握任务占用控制权，请先松开或急停")
+                self._mode_event()
+                return
+            self.commands.put(("request", self._generation, cmd))
 
-    # ----- 线程主体 -----
+    def _dispatch(self, cmd):
+        if isinstance(cmd, tuple) and cmd and cmd[0] == "request":
+            _, generation, cmd = cmd
+            if generation != self._generation:
+                return
+        if cmd == "connect":
+            self._do_connect()
+        elif cmd == "disconnect":
+            self._do_disconnect()
+        elif cmd == "stop":
+            self._do_stop()
+        elif cmd == "open":
+            self._do_open()
+        elif isinstance(cmd, tuple) and cmd:
+            if cmd[0] in ("task_grasp", "task_release"):
+                self._do_task_command(cmd)
+            else:
+                self._do_sim_command(cmd)
+
     def run(self):
         period = 1.0 / FOLLOW_HZ
         next_tick = time.monotonic() + period
         while True:
             try:
-                # CAN 耗时包含在周期里，不能在读写完成后再固定等 30ms。
                 cmd = self.commands.get(timeout=max(0.0, next_tick - time.monotonic()))
             except queue.Empty:
-                self._sim_tick()
-                self._maybe_report_state()
-                next_tick += period
-                if next_tick <= time.monotonic():
-                    # CAN 已耗尽周期，只取下一拍的最新目标，不追补历史帧。
-                    next_tick = time.monotonic()
-                continue
-            if cmd == "connect":
-                self._do_connect()
-            elif cmd == "disconnect":
-                self._do_disconnect()
-            elif cmd == "stop":
-                self._do_stop()
-            elif cmd == "open":
-                self._do_open()
-            elif isinstance(cmd, tuple) and cmd:
-                if cmd[0] in ("task_grasp", "task_release"):
-                    self._do_task_command(cmd)
-                else:
-                    self._do_sim_command(cmd)
-            elif cmd == "__quit__":
-                self._do_disconnect()
-                self._stop_sim()
-                return
-            if time.monotonic() >= next_tick:
-                self._sim_tick()
-                self._maybe_report_state()
-                next_tick += period
-                if next_tick <= time.monotonic():
-                    next_tick = time.monotonic()
+                cmd = None
+            try:
+                if cmd == "__quit__":
+                    self._do_disconnect()
+                    self._stop_vision()
+                    self._stop_sim()
+                    return
+                if cmd is not None:
+                    self._dispatch(cmd)
+                if time.monotonic() >= next_tick:
+                    self._control_tick()
+                    self._maybe_report_state()
+                    next_tick += period
+                    if next_tick <= time.monotonic():
+                        next_tick = time.monotonic()
+            except Exception as exc:
+                self._pause_control(f"控制异常: {exc}")
 
-    # ----- 仿真 / 真机同步 -----
+    # ----- Continuous control; simulation is an optional consumer/source -----
     def _send_sim(self, *payload):
         self._send(("sim",) + payload)
+
+    def _mode_event(self):
+        self._send_sim("mode", self.control_mode, self._input_epoch, self.control_source)
+
+    def _invalidate_input(self):
+        with self._input_lock:
+            self._input_epoch += 1
+            self._manual_pending.clear()
+
+    def _pause_control(self, reason=None):
+        was_active = self.control_mode != "off"
+        self.control_mode = "off"
+        self.sender = None
+        self._invalidate_input()
+        self.controller.set_state(self.controller.action())
+        self._last_stalled = ()
+        self._send_sim("stalled", [])
+        ok = True
+        if was_active and self.hand is not None:
+            try:
+                self.hand.stop()
+            except Exception as exc:
+                ok = False
+                self._send_sim("warn", f"停止命令失败: {exc}")
+        self._mode_event()
+        if reason:
+            self._send_sim("warn", reason)
+        return ok
 
     def _do_sim_command(self, cmd):
         op = cmd[0]
@@ -164,13 +227,28 @@ class HandWorker(threading.Thread):
             self._start_sim()
         elif op == "sim_stop":
             self._stop_sim()
-        elif op == "sim_mode":
-            self._set_sim_mode(cmd[1])
+        elif op == "control_mode":
+            self._set_control_mode(cmd[1])
+        elif op == "select_source" and cmd[1] in CONTROL_SOURCES.values():
+            if self._active_grasp is not None or self._task_running:
+                self._send_sim("warn", "抓握任务占用控制权，请先松开或急停")
+                self._mode_event()
+                return
+            self._pause_control()
+            self.control_source = cmd[1]
+            self._vision_seq = -1
+            self._vision_after = time.perf_counter()
+            if self.sim is not None:
+                self.sim.push_external(None)
+                self.sim.set_state(self.controller.action())
+            self._mode_event()
+        elif op == "preview_mode" and cmd[1] in ("target", "feedback"):
+            self.preview_mode = cmd[1]
         elif op == "follow_speed":
             self.follow_speed = max(1, min(255, int(cmd[1])))
             if self.sender is not None:
                 self.sender.speed = self.follow_speed
-            self._send_sim("log", f"真机跟随速度: {self.follow_speed}/255")
+            self._send_sim("log", f"真机速度: {self.follow_speed}/255")
         elif op == "vision_start":
             self._start_vision(*cmd[1:])
         elif op == "vision_stop":
@@ -180,6 +258,48 @@ class HandWorker(threading.Thread):
         elif op == "sim_event":
             self._handle_sim_lifecycle(*cmd[1:])
 
+    def _set_control_mode(self, mode):
+        if mode not in ("off", "manual", "vision", "follow"):
+            return
+        if self._task_running or self._active_grasp is not None:
+            self._send_sim("warn", "抓握任务占用控制权，请先松开或急停")
+            self._mode_event()
+            return
+        if not self._pause_control():
+            return
+        if mode == "off":
+            return
+        if self._task_cancel.is_set():
+            return
+        if not self._connected or self.hand is None:
+            self._send_sim("warn", "请先连接真机")
+            return
+        if mode == "follow" and (self.sim is None or not self.sim.wait_ready(0)):
+            self._send_sim("warn", "仿真调试需要先启动三维仿真并等待就绪")
+            return
+        if mode == "vision" and (self.vision is None or not self.vision.snapshot()["control_ready"]):
+            self._send_sim("warn", "请先启动识别，并让控制手进入画面")
+            return
+        try:
+            source = self.sim if mode == "follow" else self.controller
+            source.push_external(None)
+            align_control_to_hand(source, self.cal, self.hand)
+            self.controller.set_state(source.action())
+            self._feedback_pose = list(source.action())
+            self._vision_after = time.perf_counter()
+            self._vision_seq = -1
+            self._control_t = time.monotonic()
+            if self._task_cancel.is_set():
+                return
+            self.sender = SafeSender(self.cal, source, speed=self.follow_speed,
+                                     on_warn=lambda msg: self._send_sim("warn", msg))
+            self.control_source = mode
+            self.control_mode = mode
+            self._send_sim("pose", list(source.action()))
+            self._mode_event()
+        except Exception as exc:
+            self._pause_control(f"启用控制失败: {exc}")
+
     def _start_vision(self, source, loop=True, preview=False, mirror=False, handedness="any"):
         if VisionSource is None:
             self._send_sim("vision_error", f"视觉模块不可用: {VISION_IMPORT_ERROR}")
@@ -187,50 +307,36 @@ class HandWorker(threading.Thread):
         if self.vision is not None and self.vision.is_alive():
             self._send_sim("log", "视频源仍在运行或释放资源，请停止后等待再启动")
             return
-        if self.sim_mode == "reverse":
-            self._send_sim("vision_error", "reverse 模式下不能启动视频，请先切换到 off")
-            return
-        self._pause_video_follow("切换视频源，真机跟随已暂停")
+        if self.control_mode == "vision":
+            self._pause_control("切换视频源，视觉控制已暂停")
         try:
-            vision = VisionSource(
-                source, self.sim, loop=bool(loop), preview=bool(preview),
-                mirror=mirror, handedness=handedness,
-                on_event=lambda kind, *args: self.put(("vision_event", vision, kind, args)))
+            # GUI consumes timestamped snapshots. Inference never writes control targets.
+            vision = VisionSource(source, loop=bool(loop), preview=bool(preview),
+                                  mirror=mirror, handedness=handedness,
+                                  on_event=lambda kind, *args: self.put(("vision_event", vision, kind, args)))
             self.vision = vision
+            self._vision_seq = -1
+            self._vision_after = time.perf_counter()
             self._send_sim("vision_starting")
             vision.start()
         except Exception as exc:
             self.vision = None
             self._send_sim("vision_error", str(exc))
 
-    def _pause_video_follow(self, reason):
-        """Only the CAN owner may stop the physical hand. Never auto-resume."""
-        if self.sim_mode != "follow":
-            return
-        self._set_sim_mode("off")
-        if self.hand is not None:
-            try:
-                self.hand.stop()
-            except Exception as exc:
-                self._send_sim("error", f"停止命令失败: {exc}")
-        self._send_sim("warn", reason)
-
     def _stop_vision(self):
-        self._pause_video_follow("视频已停止，真机跟随已暂停")
+        if self.control_mode == "vision":
+            self._pause_control("视频已停止，视觉控制已暂停")
         if self.vision is not None:
             self.vision.stop()
             self._send_sim("vision_stopping")
-        # No join here: MediaPipe cleanup must never block CAN or the emergency stop.
 
     def _on_vision_event(self, vision, kind, args):
-        # Events from an earlier source must not change a restarted stream.
         if vision is not self.vision:
             return
-        if kind in ("vision_error", "vision_stopping", "vision_closed"):
-            self._pause_video_follow("视频源结束或异常，真机跟随已暂停")
+        if kind in ("vision_error", "vision_stopping", "vision_closed") and self.control_mode == "vision":
+            self._pause_control("视频源结束或异常，视觉控制已暂停")
         if kind != "vision_closed":
             self._send_sim(kind, *args)
-        # Final closed UI event is emitted only after is_alive() becomes false.
 
     def _publish_vision(self):
         if self.vision is None:
@@ -240,158 +346,106 @@ class HandWorker(threading.Thread):
             return
         self._pose_t = now
         self._send_sim("vision_state", self.vision.snapshot())
-        if self.sim is not None and self.vision.alive():
-            self._send_sim("pose", list(self.sim.action()))
+        if self.control_source == "vision":
+            self._send_sim("pose", list(self.controller.action()))
         if not self.vision.is_alive():
             self._send_sim("vision_closed")
             self.vision = None
 
     def _start_sim(self):
-        if self.sim is not None and self.sim.alive():
-            self._send_sim("log", "MuJoCo 仿真已经在运行")
-            return
         if self.sim is not None and self.sim.is_alive():
-            self._send_sim("error", "仿真窗口正在关闭，请稍后再启动")
+            self._send_sim("log", "三维仿真仍在运行或退出，请稍后再试")
             return
-        self.sim = None
         if SimSync is None:
             self._send_sim("error", f"仿真不可用: {SIM_IMPORT_ERROR}")
             return
         try:
-            sim = SimSync(on_event=lambda kind, *args: self.put(("sim_event", sim, kind, args)))
+            sim = SimSync(display="embedded",
+                          on_event=lambda kind, *args: self.put(("sim_event", sim, kind, args)))
+            sim.set_state(self.controller.action())
             self.sim = sim
-            self.sim.start()
-            if not self.sim.wait_ready(30.0):
-                detail = getattr(self.sim, "_err", None)
-                self.sim = None
-                raise RuntimeError(detail or "窗口没有正常启动")
-            self.sim_mode = "off"
-            if self.vision is not None:
-                self.vision.set_sync(self.sim)
-            self._send_sim("ready")
+            self._send_sim("starting")
+            sim.start()
         except Exception as exc:
             self.sim = None
             self._send_sim("error", f"启动仿真失败: {exc}")
 
     def _stop_sim(self):
-        self._stop_vision()          # 视频源抓着 sim 的引用,必须先停
-        sim = self.sim
-        if sim is not None:
-            sim.stop()
-            if sim is not threading.current_thread():
-                sim.join(timeout=3.0)
-            if sim.is_alive():
-                self._send_sim("error", "仿真线程仍在退出，暂不能重新启动")
-                return
-            if self.sim is sim:
-                self.sim = None
-        self.sim_mode = "off"
-        self.sender = None
-        self._send_sim("closed")
-
-    def _set_sim_mode(self, mode):
-        if mode not in ("off", "follow", "reverse"):
-            return
-        if mode != "off" and self.sim is None:
-            self._send_sim("error", "请先打开 MuJoCo 仿真窗口")
-            self._send_sim("mode", "off")
-            return
-        if mode != "off" and not self._connected:
-            self._send_sim("error", "同步模式需要先连接真机")
-            self._send_sim("mode", "off")
-            return
-        if mode == "follow":
-            if self.vision is not None and not self.vision.snapshot()["control_ready"]:
-                self._pause_video_follow("手部识别尚未就绪，真机跟随已暂停")
-                self._send_sim("error", "请先让控制手进入画面并识别成功，再启用 follow")
-                self._send_sim("mode", self.sim_mode)
-                return
-            try:
-                align_sim_to_hand(self.sim, self.cal, self.hand)
-                # 对齐把仿真硬拉到了真机当前姿态,滑杆必须跟着走。不然滑杆还
-                # 停在旧值上,下一次拖动是从旧值起跳 —— 使能瞬间不跳,第一次
-                # 碰滑杆才跳,更难查。
-                self._send_sim("pose", list(self.sim.action()))
-                self.sender = FollowSender(
-                    self.cal, self.sim, speed=self.follow_speed,
-                    on_warn=lambda msg: self._send_sim("warn", msg))
-                self.sender.resync()
-            except Exception as exc:
-                self._pause_video_follow("对齐失败，真机跟随已暂停")
-                self.sim_mode = "off"
-                self.sender = None
-                self._send_sim("error", f"启用仿真→真机失败: {exc}")
-                self._send_sim("mode", "off")
-                return
-        elif mode == "reverse":
-            # reverse 让真机当主,视频也想当主 —— 不能并存,切过去就把视频停掉
-            self._stop_vision()
-            try:
-                self.sim.push_external(None)
-            except Exception:
-                pass
-            self.sender = None
+        if self.control_mode == "follow":
+            self._pause_control("仿真调试已停止")
+        if self.sim is not None:
+            self._send_sim("stopping")
+            self.sim.stop()  # Never join the renderer on the CAN owner thread.
         else:
-            if self.sim is not None:
-                self.sim.push_external(None)
-            self.sender = None
-        self.sim_mode = mode
-        self._last_stalled = ()
-        self._send_sim("stalled", [])
-        self._send_sim("mode", mode)
+            self._send_sim("closed")
 
     def _handle_sim_lifecycle(self, sim, kind, args):
         if sim is not self.sim:
             return
+        if kind == "sim_ready":
+            if sim.alive():
+                self._send_sim("ready")
+            return
         self._send_sim(kind, *args)
         if kind == "sim_closed":
-            self._stop_vision()
-            self.sim_mode = "off"
-            self.sender = None
-            self.sim = None
+            if self.control_mode == "follow":
+                self._pause_control("仿真已退出，仿真调试控制已暂停")
+            # Keep reference until thread exits; GUI shutdown also waits on it.
 
-    def _sim_tick(self):
-        """只在 HandWorker 线程访问 CAN；GUI 不直接读写真机。"""
-        if self.vision is not None and self.sim_mode == "follow":
-            state = self.vision.snapshot()
-            # 短暂丢手时保持最后一个有效目标，避免跟随模式因为遮挡/出画
-            # 立刻退回 off。视觉线程本身会保持最后姿态；只有视频线程结束
-            # 或发生错误才停止真机。用户仍可随时手动切回 off。
-            if not self.vision.alive() or state["error"]:
-                self._pause_video_follow("视频源结束或异常，真机跟随已暂停")
-        self._publish_vision()
-        if self.sim is None or not self.sim.alive():
-            self._pause_video_follow("仿真窗口已关闭，真机跟随已暂停")
+    def _control_tick(self):
+        now = time.monotonic()
+        dt = min(max(now - self._control_t, 0.0), 0.1)
+        self._control_t = now
+        if self._task_cancel.is_set():
+            if self.control_mode != "off":
+                self._pause_control()
             return
-        if self.sim_mode == "follow" and self.sender is not None and self.hand:
+        if self.sim is not None and not self.sim.is_alive():
+            if self.control_mode == "follow":
+                self._pause_control("仿真已退出，仿真调试控制已暂停")
+            self.sim = None
+            self._send_sim("closed")
+        with self._input_lock:
+            pending, self._manual_pending = self._manual_pending, {}
+        if not self._task_running and self._active_grasp is None:
+            if self.control_source in ("manual", "follow"):
+                source = self.sim if self.control_source == "follow" else self.controller
+                if source is not None:
+                    for index, value in pending.items():
+                        source.set_one(index, value)
+            elif self.vision is not None:
+                state = self.vision.snapshot()
+                if not self.vision.alive() or state["error"]:
+                    if self.control_mode == "vision":
+                        self._pause_control("视频源结束或异常，视觉控制已暂停")
+                    self.controller.set_target(self.controller.action())
+                elif not state["control_ready"]:
+                    self.controller.set_target(self.controller.action())
+                elif (state["sequence"] != self._vision_seq
+                      and state["captured_at"] is not None
+                      and state["captured_at"] >= self._vision_after):
+                    self.controller.set_target(state["norms"])
+                    self._vision_seq = state["sequence"]
+            self.controller._advance(dt)
+        if self.control_mode == "follow" and (self.sim is None or not self.sim.alive()):
+            self._pause_control("仿真已停止，仿真调试控制已暂停")
+        if self.control_mode != "off" and self.sender is not None and self.hand is not None:
             try:
-                self.sender.tick(self.hand)
-                # 钉住状态变化时才上报,不然 30Hz 会把事件队列刷满
+                self.sender.tick(self.hand, should_cancel=self._task_cancel.is_set)
+                self._feedback_pose = reorder_real_to_sim([
+                    self.cal.norm_from_pos(i, p) for i, p in enumerate(self.sender.positions)])
                 stalled = tuple(self.sender.stalled)
                 if stalled != self._last_stalled:
                     self._last_stalled = stalled
                     self._send_sim("stalled", list(stalled))
             except Exception as exc:
-                self._send_sim("error", f"同步下发失败: {exc}")
-                self._pause_video_follow("通信异常，真机跟随已暂停")
-        elif self.sim_mode == "reverse" and self.hand:
-            now = time.monotonic()
-            if now - self._reverse_t < 0.06:
-                return
-            self._reverse_t = now
-            try:
-                pos = self.hand.read_pos()
-                norms = [self.cal.norm_from_pos(i, p)
-                         for i, p in enumerate(pos)]
-                # 通道重排**只在这里做一次**,然后把仿真序的结果同时给仿真和
-                # 界面。之前界面自己拿 pos 再排一遍,抄错了映射表(掰食指亮的
-                # 是中指),而且 App 上根本没有 cal —— 两个 bug 都是"同一份映射
-                # 抄了两份"引起的,所以现在只留一份。
-                sim_norms = reorder_real_to_sim(norms)
-                self.sim.push_external(sim_norms)
-                self._send_sim("pose", sim_norms)
-            except Exception as exc:
-                self._send_sim("error", f"真机→仿真读取失败: {exc}")
+                self._pause_control(f"通信或控制异常，已暂停: {exc}")
+        self._publish_vision()
+        if self.sim is not None and self.sim.alive() and self.control_source != "follow":
+            pose = (self._feedback_pose if self.preview_mode == "feedback"
+                    and self._connected else self.controller.action())
+            if pose is not None:
+                self.sim.push_external(pose)
 
     # ----- 各命令实现 -----
     def _do_connect(self):
@@ -416,64 +470,88 @@ class HandWorker(threading.Thread):
         self._send(("connected", info, cali))
 
     def _do_disconnect(self):
+        self._pause_control()
         if not self._connected:
             self._task_cancel.clear()
-            self._send(("busy", "还没有连接"))
             return
-        self._set_sim_mode("off")
+        self._task_cancel.clear()
         try:
-            # 断开前回到张开姿态,避免手停在夹紧状态
-            self.hand.move(self.cal.pose_from_norm([0.0] * N_MOTORS), speed=140)
-            self.hand.wait_settled()
+            self._open_hand()
         except Exception as exc:
             self._send(("busy", f"断开前回张开失败: {exc}"))
-        self.hand.close()
-        self.hand = None
-        self._connected = False
-        self._active_grasp = None
-        self._grasp_started_t = None
-        self._task_cancel.clear()
-        self._send(("disconnected", "已断开"))
+        finally:
+            self.hand.close()
+            self.hand = None
+            self._connected = False
+            self._feedback_pose = None
+            self._active_grasp = None
+            self._grasp_started_t = None
+            self._task_cancel.clear()
+            self._send(("disconnected", "已断开"))
 
     def _do_stop(self):
-        if not self._connected:
-            self._task_cancel.clear()
-            self._send(("busy", "还没有连接"))
-            return
+        was_active = self.control_mode != "off"
+        stopped = self._pause_control()
         try:
-            self._set_sim_mode("off")
-            self.hand.stop()   # FingerStop: 停在当前位置,不收回
-            self._task_cancel.clear()
-            self._send(("busy", "已急停(停在当前位置)"))
+            if self.hand is not None and not was_active:
+                self.hand.stop()
+            if self._active_grasp is not None:
+                self._active_grasp = None
+                self._grasp_started_t = None
+                self._send(("task_aborted", "保持任务已急停"))
+            if stopped:
+                self._send(("busy", "已急停（停在当前位置）"))
         except Exception as exc:
             self._send(("error", f"急停失败: {exc}"))
+        finally:
+            self._task_cancel.clear()
+
+    def _open_hand(self):
+        actual = [self.cal.norm_from_pos(i, p) for i, p in enumerate(self.hand.read_pos())]
+        play(self.hand, self.cal, GESTURES["open"], prev_norms=actual,
+             verbose=False, on_step=self._stop_cb,
+             should_cancel=self._task_cancel.is_set)
+        align_control_to_hand(self.controller, self.cal, self.hand)
+        self._feedback_pose = list(self.controller.action())
+        self._send_sim("pose", self._feedback_pose)
 
     def _do_open(self):
         if not self._connected:
-            self._send(("busy", "还没有连接"))
+            self._send(("busy", "请先连接真机"))
             return
-        if self.sim_mode == "follow":
-            self._send(("busy", "仿真→真机同步中，请先切回 off 再执行真机任务"))
+        if not self._pause_control():
             return
-        play(self.hand, self.cal, GESTURES["open"], verbose=False,
-             on_step=self._stop_cb)
-        if self._active_grasp is not None:
-            self._active_grasp = None
-            self._grasp_started_t = None
-            self._send(("task_aborted", "已手动张开，抓握记录未完成"))
+        self._task_running = True
+        try:
+            self._open_hand()
+        except Exception as exc:
+            self.hand.stop()
+            self._send(("error", f"张开未完成: {exc}"))
+        finally:
+            self._task_running = False
+            if self._active_grasp is not None:
+                self._active_grasp = None
+                self._grasp_started_t = None
+                self._send(("task_aborted", "已手动张开或中止张开，抓握记录未完成"))
 
     def _do_task_command(self, cmd):
-        if cmd[0] == "task_grasp":
-            self._do_adaptive_grasp(*cmd[1:])
-        elif cmd[0] == "task_release":
-            self._do_task_release()
+        self._invalidate_input()
+        self._task_running = True
+        try:
+            if cmd[0] == "task_grasp":
+                self._do_adaptive_grasp(*cmd[1:])
+            elif cmd[0] == "task_release":
+                self._do_task_release()
+        finally:
+            self._task_running = False
+            self._mode_event()
 
     def _do_adaptive_grasp(self, contact_ma, close_norm):
         if not self._connected or self.hand is None:
             self._send(("task_error", "请先连接真机"))
             return
-        if self.sim_mode != "off":
-            self._send(("task_error", "请先把仿真同步模式切到 off"))
+        if self.control_mode != "off":
+            self._send(("task_error", "请先暂停连续控制，再开始抓握任务"))
             return
         if self._active_grasp is not None:
             self._send(("task_error", "当前已有抓握任务；请先松开并记录"))
@@ -504,6 +582,8 @@ class HandWorker(threading.Thread):
             self._send(("task_error", str(exc)))
             return
 
+        self.controller.set_state(reorder_real_to_sim(result["norms"]))
+        self._feedback_pose = list(self.controller.action())
         self._active_grasp = result
         self._grasp_started_t = time.monotonic()
         self._send(("task_holding", result))
@@ -528,10 +608,10 @@ class HandWorker(threading.Thread):
         except Exception as exc:
             feedback_error = str(exc)
         try:
-            play(self.hand, self.cal, GESTURES["open"], verbose=False,
-                 on_step=self._stop_cb)
+            self._open_hand()
         except Exception as exc:
-            self._send(("task_error", f"自动松开失败: {exc}"))
+            self.hand.stop()
+            self._send(("task_release_error", f"自动松开失败: {exc}"))
             return
         self._active_grasp = None
         self._grasp_started_t = None
@@ -548,25 +628,23 @@ class HandWorker(threading.Thread):
                 i, total, norms, pose, None)))
 
     def _maybe_report_state(self):
-        """工作线程空闲时,每 2 秒主动上报一次电机状态,让界面保持活动。
-
-        不放在手势执行期间 —— 那会挤占下发节奏。只在命令队列空的时候做。
-        """
+        """连续控制复用反馈；空闲时以 5 Hz 读取，任务中不额外占用 CAN。"""
         if not self._connected:
             return
         now = time.monotonic()
-        if getattr(self, "_last_state_t", 0) and now - self._last_state_t < 2.0:
+        if getattr(self, "_last_state_t", 0) and now - self._last_state_t < (0.1 if self.sender is not None else 0.2):
             return
         self._last_state_t = now
         try:
-            if self.sim_mode == "follow" and self.sender is not None:
+            if self.control_mode != "off" and self.sender is not None:
                 # 跟随保护已经读取过反馈；界面回显复用它，不再占一次 CAN。
                 pos = list(self.sender.positions)
                 cur = list(self.sender.currents)
             else:
                 pos = self.hand.read_pos()
                 cur = self.hand.read_currents()
-            # 状态帧不标注轻量,让主线程去判断有没有人在看
+            self._feedback_pose = reorder_real_to_sim([
+                self.cal.norm_from_pos(i, p) for i, p in enumerate(pos)])
             self._send(("state", pos, cur))
         except Exception as exc:
             self._send(("error", f"读状态失败: {exc}"))
@@ -585,6 +663,8 @@ class HandWorker(threading.Thread):
 
 class App(tk.Tk):
     def __init__(self, cal, selftest=False):
+        # 也覆盖直接 import / 构造 App 的入口；必须早于 Tk 创建窗口。
+        configure_window_scaling()
         super().__init__()
         self.title("ROH-LiteS001 真机控制台")
         self.geometry(f"{min(1240, self.winfo_screenwidth() - 60)}x{min(880, self.winfo_screenheight() - 90)}")
@@ -602,10 +682,15 @@ class App(tk.Tk):
         self.motor_pos = [0] * N_MOTORS
         self.motor_cur = [0] * N_MOTORS
         self.device = None
-        self.sim_mode_var = tk.StringVar(value="off")
+        self.control_mode_var = tk.StringVar(value="off")
+        self.control_source_var = tk.StringVar(value="手动滑杆")
+        self.preview_mode_var = tk.StringVar(value="目标姿态")
+        self._input_epoch = 0
+        self._control_pending = False
+        self.actual_value_vars = []
         self.follow_speed_var = tk.StringVar(value=str(FOLLOW_SPEED))
         self.sim_status_label = None
-        self.sim_mode_combo = None
+        self.control_mode_combo = None
         self.sim_sliders = []
         self.sim_slider_vars = []
         self.sim_value_vars = []
@@ -620,6 +705,16 @@ class App(tk.Tk):
         self._preview_source = None
         self._preview_seq = 0
         self._preview_image = None
+        self._sim_preview_source = None
+        self._sim_preview_seq = 0
+        self._sim_preview_rgb = None
+        self._sim_preview_image = None
+        self._sim_preview_size = None
+        self._sim_drag = None
+        self._sim_hint_text = "三维预览可选；手动和视觉控制无需启动仿真"
+        self._sim_failed = False
+        self.sim_preview_var = tk.BooleanVar(value=True)
+        self.log_visible_var = tk.BooleanVar(value=False)
         self._vision_error = False
         self._vision_ui_state = None
         self.vision_loop_var = tk.BooleanVar(value=True)
@@ -657,9 +752,12 @@ class App(tk.Tk):
     # ---------- UI ----------
     def _build_ui(self):
         pad = {"padx": 6, "pady": 3}
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=3, minsize=150)
+        self.rowconfigure(3, weight=1, minsize=190)
 
         top = ttk.Frame(self)
-        top.pack(fill="x", **pad)
+        top.grid(row=0, column=0, sticky="ew", **pad)
         ttk.Button(top, text="连接", command=lambda: self.worker.put("connect"),
                    width=8).pack(side="left", padx=2)
         ttk.Button(top, text="断开", command=lambda: self.worker.put(
@@ -668,33 +766,25 @@ class App(tk.Tk):
         self.status_label.pack(side="left", padx=8)
         self.info_label = ttk.Label(top, text="", foreground="#555")
         self.info_label.pack(side="left", padx=8)
+        ttk.Button(top, text="退出并回张开", command=self._on_close).pack(side="right", padx=2)
+        ttk.Button(top, text="急停（停在当前位置）",
+                   command=lambda: self.worker.put("stop")).pack(side="right", padx=4)
+        ttk.Button(top, text="张开（安全姿态）",
+                   command=lambda: self.worker.put("open")).pack(side="right", padx=4)
 
+        self._build_preview_panels(pad)
         self._build_sim_panel(pad)
 
         body = ttk.Frame(self)
-        body.pack(fill="both", expand=True, **pad)
-
-        # 左侧: 安全
-        left = ttk.LabelFrame(body, text="安全")
-        left.pack(side="left", fill="y", padx=4, pady=4)
-        ttk.Button(left, text="张开（安全姿态）",
-                   command=lambda: self.worker.put("open"),
-                   width=18).pack(padx=12, pady=8, fill="x")
-        ttk.Button(left, text="急停（停在当前位置）",
-                   command=lambda: self.worker.put("stop"),
-                   width=18).pack(padx=12, pady=8, fill="x")
-        ttk.Button(left, text="退出并回张开",
-                   command=self._on_close,
-                   width=18).pack(padx=12, pady=8, fill="x")
+        body.grid(row=3, column=0, sticky="nsew", **pad)
 
         # 中间: 以物体接触和结果记录为目标的任务流程
         mid = ttk.LabelFrame(body, text="任务：自适应抓握")
         mid.pack(side="left", fill="both", expand=True, padx=4, pady=4)
         ttk.Label(
             mid,
-            text=("把物体放在手掌前并保持手部固定。四指会同时缓慢闭合；接触的手指\n"
-                  "会单独停住，其余继续，然后再尝试拇指对掌。任务记录接触，不判断物体是否夹稳。"),
-            justify="left", wraplength=440).pack(anchor="w", padx=10, pady=(10, 8))
+            text="固定手部并放好物体。四指接触后分别停住，再尝试拇指对掌；是否夹稳需人工判定。",
+            justify="left", wraplength=760).pack(anchor="w", padx=8, pady=(3, 2))
 
         settings = ttk.Frame(mid)
         settings.pack(fill="x", padx=10, pady=4)
@@ -724,7 +814,7 @@ class App(tk.Tk):
         self.task_status_label = ttk.Label(
             mid, text="未连接。先连接真机，再张开手并放好物体。", foreground="#555")
         self.task_status_label.pack(anchor="w", padx=10, pady=(4, 3))
-        self.task_result = tk.Text(mid, height=12, wrap="word")
+        self.task_result = tk.Text(mid, height=3, width=40, wrap="word")
         self.task_result.pack(fill="both", expand=True, padx=10, pady=(3, 10))
         self.task_result.insert(
             "1.0", "单次结果会显示各指接触位置、电流和人工稳定性判定。\n"
@@ -732,18 +822,9 @@ class App(tk.Tk):
         self.task_result.configure(state="disabled")
         self._refresh_task_controls()
 
-        # 右侧: 实时预览 + 电机状态
+        # 任务旁始终显示电机反馈。
         right = ttk.Frame(body)
         right.pack(side="left", fill="y", padx=4)
-
-        video = ttk.LabelFrame(right, text="实时视频 / 手部关键点")
-        video.pack(fill="x", padx=4, pady=4)
-        self.video_canvas = tk.Canvas(video, width=360, height=270,
-                                      bg="#17212b", highlightthickness=0)
-        self.video_canvas.pack(fill="both", expand=True)
-        self._video_item = self.video_canvas.create_image(180, 135, anchor="center")
-        self._video_hint = self.video_canvas.create_text(
-            180, 135, text="选择摄像头并点击启动", fill="#dde6ed", font=("Microsoft YaHei UI", 11))
 
         motors = ttk.LabelFrame(right, text="电机状态")
         motors.pack(fill="both", expand=True, padx=4, pady=4)
@@ -764,46 +845,110 @@ class App(tk.Tk):
 
         # 底部: 日志
         bottom = ttk.Frame(self)
-        bottom.pack(side="bottom", fill="both", expand=True, **pad)
-        ttk.Label(bottom, text="日志").pack(anchor="w")
-        self.log_text = tk.Text(bottom, height=7)
-        self.log_text.pack(fill="both", expand=True)
+        bottom.grid(row=4, column=0, sticky="ew", **pad)
+        bottom.columnconfigure(0, weight=1)
+        ttk.Checkbutton(bottom, text="展开日志", variable=self.log_visible_var,
+                        command=self._toggle_log).grid(row=0, column=0, sticky="w")
+        self.log_text = tk.Text(bottom, height=3)
+        self.log_text.grid(row=1, column=0, sticky="ew")
+        self.log_text.grid_remove()
         self.log_text.configure(state="disabled")
 
         self.log_text.tag_configure("warn", foreground="#b00")
         self.log_text.tag_configure("ok", foreground="#070")
 
-    def _build_sim_panel(self, pad):
-        """交互式仿真控制区；MuJoCo 画面本身由 passive viewer 独立显示。"""
-        box = ttk.LabelFrame(self, text="MuJoCo 仿真同步（仿真窗口独立显示）")
-        box.pack(fill="x", **pad)
+    def _toggle_log(self):
+        if self.log_visible_var.get():
+            self.log_text.grid()
+        else:
+            self.log_text.grid_remove()
 
+    def _build_preview_panels(self, pad):
+        views = ttk.Frame(self)
+        views.grid(row=1, column=0, sticky="nsew", **pad)
+        views.columnconfigure((0, 1), weight=1, uniform="preview")
+        views.rowconfigure(0, weight=1)
+        video = ttk.LabelFrame(views, text="摄像头 / 手部关键点")
+        video.grid(row=0, column=0, sticky="nsew", padx=(0, 3))
+        sim = ttk.LabelFrame(views, text="三维手模型")
+        sim.grid(row=0, column=1, sticky="nsew", padx=(3, 0))
+        for panel in (video, sim):
+            panel.columnconfigure(0, weight=1)
+            panel.rowconfigure(1, weight=1)
+        ttk.Label(video, text="实时视频与识别结果", foreground="#555").grid(
+            row=0, column=0, sticky="w", padx=6, pady=5)
+        tools = ttk.Frame(sim)
+        tools.grid(row=0, column=0, sticky="ew", padx=6, pady=2)
+        row = ttk.Frame(tools)
+        row.pack(fill="x")
+        self.sim_start_btn = ttk.Button(row, text="启动三维", width=9,
+                                        command=lambda: self.worker.put(("sim_start",)))
+        self.sim_start_btn.pack(side="left", padx=2)
+        self.sim_stop_btn = ttk.Button(row, text="停止三维", width=9,
+                                       command=lambda: self.worker.put(("sim_stop",)))
+        self.sim_stop_btn.pack(side="left", padx=2)
+        self.sim_stop_btn.state(["disabled"])
+        self.sim_status_label = ttk.Label(row, text="未启动", foreground="#555")
+        self.sim_status_label.pack(side="left", padx=4)
+        ttk.Button(row, text="复位视角", width=9, command=self._reset_sim_camera).pack(side="right")
+        row = ttk.Frame(tools)
+        row.pack(fill="x", pady=2)
+        self.preview_mode_combo = ttk.Combobox(row, textvariable=self.preview_mode_var,
+                                               values=("目标姿态", "实际反馈"),
+                                               state="readonly", width=10)
+        self.preview_mode_combo.pack(side="left", padx=2)
+        self.preview_mode_combo.bind("<<ComboboxSelected>>", self._preview_mode_changed)
+        ttk.Label(row, text="拖动旋转 · 滚轮缩放", foreground="#555").pack(side="left", padx=4)
+        ttk.Checkbutton(row, text="显示画面", variable=self.sim_preview_var,
+                        command=self._refresh_sim_preview).pack(side="right")
+
+        self.video_canvas = tk.Canvas(video, width=480, height=270,
+                                      bg="#17212b", highlightthickness=0)
+        self.video_canvas.grid(row=1, column=0, sticky="nsew", padx=2, pady=2)
+        self._video_item = self.video_canvas.create_image(240, 135, anchor="center")
+        self._video_hint = self.video_canvas.create_text(
+            240, 135, text="选择摄像头并点击启动", fill="#dde6ed", font=("Microsoft YaHei UI", 11))
+        self.sim_canvas = tk.Canvas(sim, width=480, height=270,
+                                    bg="#101820", highlightthickness=0)
+        self.sim_canvas.grid(row=1, column=0, sticky="nsew", padx=2, pady=2)
+        self._sim_image_item = self.sim_canvas.create_image(240, 135, anchor="center")
+        self._sim_hint = self.sim_canvas.create_text(
+            240, 135, text=self._sim_hint_text, fill="#dde6ed", font=("Microsoft YaHei UI", 11))
+        self.sim_canvas.bind("<ButtonPress-1>", self._sim_mouse_down)
+        self.sim_canvas.bind("<B1-Motion>", self._sim_mouse_drag)
+        self.sim_canvas.bind("<ButtonRelease-1>", self._sim_mouse_up)
+        self.sim_canvas.bind("<MouseWheel>", self._sim_mouse_wheel)
+        self.sim_canvas.bind("<Button-4>", lambda _e: self._zoom_sim_camera(1))
+        self.sim_canvas.bind("<Button-5>", lambda _e: self._zoom_sim_camera(-1))
+
+    def _build_sim_panel(self, pad):
+        """Physical control and input selection are independent of 3D rendering."""
+        box = ttk.LabelFrame(self, text="真机控制 · 三维预览可单独启停")
+        box.grid(row=2, column=0, sticky="ew", **pad)
         controls = ttk.Frame(box)
         controls.pack(fill="x", padx=6, pady=(4, 0))
-        ttk.Button(controls, text="打开仿真窗口", width=16,
-                   command=lambda: self.worker.put(("sim_start",))).pack(
-                       side="left", padx=2)
-        ttk.Button(controls, text="关闭仿真窗口", width=16,
-                   command=lambda: self.worker.put(("sim_stop",))).pack(
-                       side="left", padx=2)
-        ttk.Label(controls, text="模式").pack(side="left", padx=(14, 3))
-        self.sim_mode_combo = ttk.Combobox(
-            controls, textvariable=self.sim_mode_var, state="readonly",
-            values=("off", "follow", "reverse"), width=10)
-        self.sim_mode_combo.pack(side="left")
-        self.sim_mode_combo.bind("<<ComboboxSelected>>", self._sim_mode_changed)
-        self.sim_status_label = ttk.Label(controls, text="未启动", foreground="#555")
-        self.sim_status_label.pack(side="left", padx=10)
-        ttk.Label(controls, text="off=只仿真  follow=仿真→真机  reverse=真机→仿真",
-                  foreground="#555").pack(side="left", padx=4)
+        ttk.Label(controls, text="控制方式").pack(side="left", padx=2)
+        self.control_mode_combo = ttk.Combobox(
+            controls, textvariable=self.control_source_var, state="readonly",
+            values=tuple(CONTROL_SOURCES), width=12)
+        self.control_mode_combo.pack(side="left", padx=4)
+        self.control_mode_combo.bind("<<ComboboxSelected>>", self._control_mode_changed)
+        self.control_enable_btn = ttk.Button(controls, text="启用真机控制", command=self._enable_control)
+        self.control_enable_btn.pack(side="left", padx=4)
+        self.control_pause_btn = ttk.Button(controls, text="暂停控制",
+                                             command=lambda: self.worker.put(("control_mode", "off")))
+        self.control_pause_btn.pack(side="left", padx=4)
+        self.control_status_label = ttk.Label(controls, text="已暂停", foreground="#555")
+        self.control_status_label.pack(side="left", padx=8)
 
         speed_row = ttk.Frame(box)
         speed_row.pack(fill="x", padx=6, pady=3)
-        ttk.Label(speed_row, text="真机跟随速度（1–255）").pack(side="left")
+        ttk.Label(speed_row, text="真机速度（1–255）").pack(side="left")
         ttk.Spinbox(speed_row, from_=1, to=255, width=5,
                     textvariable=self.follow_speed_var).pack(side="left", padx=4)
-        ttk.Button(speed_row, text="应用速度",
-                   command=self._apply_follow_speed).pack(side="left")
+        ttk.Button(speed_row, text="应用速度", command=self._apply_follow_speed).pack(side="left")
+        ttk.Label(speed_row, text="滑杆 / 数值输入设定目标；Enter 应用数值。暂停时仅预览。",
+                  foreground="#555").pack(side="left", padx=12)
 
         sliders = ttk.Frame(box)
         sliders.pack(fill="x", padx=6, pady=2)
@@ -823,8 +968,13 @@ class App(tk.Tk):
             self.sim_sliders.append(scale)
             # 显示用单独的 StringVar:DoubleVar 直接绑标签会打印全精度浮点
             # (0.4523809523809524),width=5 的格子里只能看到一截。
-            ttk.Label(col, textvariable=shown, width=5,
-                      anchor="center").pack()
+            entry = ttk.Entry(col, textvariable=shown, width=6, justify="center")
+            entry.pack()
+            entry.bind("<Return>", lambda event, j=i: self._joint_value_entered(j))
+            self.sim_sliders.append(entry)
+            actual = tk.StringVar(value="实际 --")
+            self.actual_value_vars.append(actual)
+            ttk.Label(col, textvariable=actual, foreground="#555", anchor="center").pack()
 
         self._build_vision_row(box)
 
@@ -868,8 +1018,10 @@ class App(tk.Tk):
         status.pack(fill="x", padx=6, pady=(0, 5))
         self.vision_status_label = ttk.Label(status, text="未启动", foreground="#555")
         self.vision_status_label.pack(side="left", padx=(0, 12))
-        ttk.Button(status, text="启用真机跟随", command=lambda: self.worker.put(("sim_mode", "follow"))).pack(side="right", padx=3)
-        ttk.Label(status, text="先预览识别，再打开仿真、连接真机并启用跟随", foreground="#555").pack(side="right", padx=8)
+        self.vision_enable_btn = ttk.Button(status, text="启用视觉控制",
+                                            command=lambda: self.worker.put(("control_mode", "vision")))
+        self.vision_enable_btn.pack(side="right", padx=3)
+        ttk.Label(status, text="识别就绪后连接并启用；无需启动仿真", foreground="#555").pack(side="right", padx=8)
         if VisionSource is None:
             self.vision_status_label.config(text=f"不可用: {VISION_IMPORT_ERROR}", foreground="#b00")
 
@@ -878,9 +1030,10 @@ class App(tk.Tk):
             return
         connected = bool(self.worker.connected)
         idle = self._task_state == "idle"
-        can_start = (connected and idle and self.sim_mode_var.get() == "off"
+        can_start = (connected and idle and self.control_mode_var.get() == "off"
                      and not self._closing)
         self.task_start_btn.state(["!disabled" if can_start else "disabled"])
+        self._refresh_control_widgets()
         holding = self._task_state == "holding"
         for button in (self.task_stable_btn, self.task_failed_btn,
                        self.task_release_btn):
@@ -1019,10 +1172,12 @@ class App(tk.Tk):
                        self.video_loop_check, self.vision_mirror_check, self.vision_start_btn):
             widget.state(["disabled" if running else "!disabled"])
         self.vision_stop_btn.state(["!disabled" if running else "disabled"])
-        self._set_sliders_enabled(not running and self.sim_mode_var.get() != "reverse")
+        self._refresh_control_widgets()
 
     def _refresh_preview(self):
         vision = self.worker.vision
+        self.video_canvas.coords(self._video_hint, self.video_canvas.winfo_width() / 2,
+                                 self.video_canvas.winfo_height() / 2)
         if vision is not self._preview_source:
             self._preview_source, self._preview_seq = vision, 0
         if vision is None or not vision.alive():
@@ -1042,9 +1197,117 @@ class App(tk.Tk):
         self.video_canvas.itemconfigure(self._video_item, image=self._preview_image)
         self.video_canvas.itemconfigure(self._video_hint, state="hidden")
 
-    def _sim_mode_changed(self, _event=None):
-        self._refresh_task_controls()
-        self.worker.put(("sim_mode", self.sim_mode_var.get()))
+    def _refresh_sim_preview(self):
+        sim = self.worker.sim
+        canvas = self.sim_canvas
+        size = (max(1, canvas.winfo_width()), max(1, canvas.winfo_height()))
+        canvas.coords(self._sim_hint, size[0] / 2, size[1] / 2)
+        if sim is not self._sim_preview_source:
+            self._sim_preview_source = sim
+            self._sim_preview_seq = 0
+            self._sim_preview_rgb = self._sim_preview_image = None
+            self._sim_preview_size = None
+            self._sim_drag = None
+            canvas.itemconfigure(self._sim_image_item, image="")
+        preview = sim.preview if sim is not None else None
+        if preview is None or not sim.alive():
+            canvas.itemconfigure(self._sim_image_item, image="")
+            canvas.itemconfigure(self._sim_hint, state="normal", text=self._sim_hint_text)
+            return
+        enabled = self.sim_preview_var.get()
+        preview.set_enabled(enabled and canvas.winfo_ismapped() and not self._closing)
+        if not enabled:
+            canvas.itemconfigure(self._sim_image_item, image="")
+            canvas.itemconfigure(self._sim_hint, state="normal", text="画面已暂停，仿真继续运行")
+            self._sim_preview_size = None
+            return
+        packet = preview.frame(self._sim_preview_seq)
+        if packet is not None:
+            self._sim_preview_seq, self._sim_preview_rgb = packet
+        if self._sim_preview_rgb is None:
+            canvas.itemconfigure(self._sim_hint, state="normal", text=self._sim_hint_text)
+            return
+        if packet is None and size == self._sim_preview_size:
+            return
+        from PIL import Image, ImageTk, ImageOps
+        picture = ImageOps.contain(Image.fromarray(self._sim_preview_rgb), size)
+        self._sim_preview_image = ImageTk.PhotoImage(picture, master=self)
+        self._sim_preview_size = size
+        canvas.coords(self._sim_image_item, size[0] / 2, size[1] / 2)
+        canvas.itemconfigure(self._sim_image_item, image=self._sim_preview_image)
+        canvas.itemconfigure(self._sim_hint, state="hidden")
+
+    def _camera_preview(self):
+        sim = self.worker.sim
+        return sim.preview if sim is not None and sim.alive() and not self._closing else None
+
+    def _sim_mouse_down(self, event):
+        self._sim_drag = (event.x, event.y)
+
+    def _sim_mouse_up(self, _event):
+        self._sim_drag = None
+
+    def _sim_mouse_drag(self, event):
+        preview = self._camera_preview()
+        if preview is not None and self._sim_drag is not None:
+            x, y = self._sim_drag
+            preview.orbit((event.x - x) / max(1, self.sim_canvas.winfo_width()),
+                          (event.y - y) / max(1, self.sim_canvas.winfo_height()))
+        self._sim_drag = (event.x, event.y)
+
+    def _sim_mouse_wheel(self, event):
+        self._zoom_sim_camera(event.delta if sys.platform == "darwin" else event.delta / 120)
+        return "break"
+
+    def _zoom_sim_camera(self, steps):
+        preview = self._camera_preview()
+        if preview is not None:
+            preview.zoom(steps)
+
+    def _reset_sim_camera(self):
+        preview = self._camera_preview()
+        if preview is not None:
+            preview.reset_camera()
+
+    def _control_mode_changed(self, _event=None):
+        self._control_pending = True
+        self._refresh_control_widgets()
+        self.worker.put(("select_source", CONTROL_SOURCES[self.control_source_var.get()]))
+
+    def _enable_control(self):
+        self.worker.put(("control_mode", CONTROL_SOURCES[self.control_source_var.get()]))
+
+    def _preview_mode_changed(self, _event=None):
+        self.worker.put(("preview_mode", "feedback" if self.preview_mode_var.get() == "实际反馈" else "target"))
+
+    def _refresh_control_widgets(self):
+        if self._closing:
+            return
+        idle = self._task_state == "idle"
+        ready = idle and not self._control_pending
+        active = self.control_mode_var.get() != "off"
+        connected = self.worker.connected
+        self.control_mode_combo.configure(state="readonly" if idle else "disabled")
+        self.control_enable_btn.state(["!disabled" if ready and connected and not active else "disabled"])
+        self.control_pause_btn.state(["!disabled" if idle and active else "disabled"])
+        self.vision_enable_btn.state(["!disabled" if ready and connected else "disabled"])
+        manual = self.control_source_var.get() != "视觉输入"
+        self._set_sliders_enabled(ready and manual)
+        self.preview_mode_combo.configure(state="disabled" if self.control_source_var.get() == "仿真调试" else "readonly")
+        if not idle:
+            self.control_status_label.config(text="抓握任务占用控制权", foreground="#b60")
+
+    def _joint_value_entered(self, index):
+        try:
+            value = float(self.sim_value_vars[index].get())
+            if not 0 <= value <= 1:
+                raise ValueError
+        except ValueError:
+            self.sim_value_vars[index].set(f"{self.sim_slider_vars[index].get():.2f}")
+            self.control_status_label.config(text="关节目标请输入 0–1 的数值", foreground="#b00")
+            return
+        self.sim_slider_vars[index].set(value)
+        self._sim_slider_changed(index, value)
 
     def _apply_follow_speed(self):
         try:
@@ -1052,7 +1315,7 @@ class App(tk.Tk):
             if not 1 <= speed <= 255:
                 raise ValueError
         except ValueError:
-            self._log_append("跟随速度请输入 1–255 的整数", "warn")
+            self._log_append("真机速度请输入 1–255 的整数", "warn")
             return
         self.worker.put(("follow_speed", speed))
 
@@ -1062,7 +1325,7 @@ class App(tk.Tk):
             s.state([state])
 
     def _set_sliders(self, norms_sim):
-        """把滑杆摆到给定姿态(归一化,仿真序)。reverse 回显走这里。
+        """回显接管时的姿态或视觉目标；实际位置另行显示。
 
         必须带 `_slider_guard`:给 DoubleVar 赋值会触发 ttk.Scale 的 command,
         也就是回调进 _sim_slider_changed 再去 set_one() —— 真机每报一帧就把
@@ -1077,13 +1340,10 @@ class App(tk.Tk):
             self._slider_guard = False
 
     def _sim_slider_changed(self, i, value):
-        # SimSync.set_one 自带锁,主线程直接调是安全的;走命令队列反而会被
-        # worker 的 CAN 节拍拖慢,拖动手感变差。
         self.sim_value_vars[i].set(f"{float(value):.2f}")
-        if self._slider_guard:
+        if self._slider_guard or self._control_pending:
             return
-        if self.worker.sim is not None:
-            self.worker.sim.set_one(i, float(value))
+        self.worker.put(("manual_target", self._input_epoch, i, float(value)))
 
     def _log_append(self, text, tag=None):
         """写界面日志。tag 可选:'ok' 绿色、'warn' 红色,用于区分事件性质。
@@ -1129,6 +1389,7 @@ class App(tk.Tk):
                     _tb.format_exc().splitlines()) + "\n")
         try:
             self._refresh_preview()
+            self._refresh_sim_preview()
         except Exception as exc:
             self._log_append(f"预览显示失败: {exc}", "warn")
         self._after_id = self.after(33, self._poll_ref)
@@ -1169,6 +1430,8 @@ class App(tk.Tk):
             self.device = None
             self.status_label.config(text="未连接", foreground="red")
             self.info_label.config(text="")
+            for variable in self.actual_value_vars:
+                variable.set("实际 --")
             self._task_state = "idle"
             self._task_outcome = None
             self.task_status_label.config(text="未连接。", foreground="#555")
@@ -1228,6 +1491,11 @@ class App(tk.Tk):
             self._set_task_result("任务中止，未保存为完整试验记录。")
             self._refresh_task_controls()
             self._log_append("⚠ " + payload[1], "warn")
+        elif kind == "task_release_error":
+            self._task_state = "holding"
+            self.task_status_label.config(text=payload[1], foreground="#b00")
+            self._refresh_task_controls()
+            self._log_append(payload[1], "warn")
         elif kind == "task_error":
             self._task_state = "idle"
             self._task_outcome = None
@@ -1253,25 +1521,45 @@ class App(tk.Tk):
 
     def _handle_sim_event(self, payload):
         kind = payload[0]
-        if kind == "ready":
+        if kind == "starting":
+            self._sim_failed = False
+            self._sim_hint_text = "正在加载三维手模型…"
+            self.sim_status_label.config(text="正在启动…", foreground="#b60")
+            self.sim_start_btn.state(["disabled"])
+            if not self._closing:
+                self.sim_stop_btn.state(["!disabled"])
+        elif kind == "stopping":
+            self._sim_hint_text = "正在停止仿真…"
+            self.sim_status_label.config(text="正在停止…", foreground="#555")
+            self.sim_start_btn.state(["disabled"])
+            self.sim_stop_btn.state(["disabled"])
+        elif kind in ("ready", "sim_ready"):
+            self._sim_hint_text = "正在生成三维画面…"
             self.sim_status_label.config(text="仿真运行中", foreground="green")
-            self._log_append("✓ MuJoCo 仿真窗口已打开", "ok")
-        elif kind == "closed":
-            self.sim_status_label.config(text="未启动", foreground="#555")
-            self.sim_mode_var.set("off")
-            self._log_append("MuJoCo 仿真窗口已关闭")
-        elif kind == "mode":
-            mode = payload[1]
-            self.sim_mode_var.set(mode)
-            label = {"off": "只仿真", "follow": "仿真→真机",
-                     "reverse": "真机→仿真"}.get(mode, mode)
-            self.sim_status_label.config(text=label, foreground="green")
+            self.sim_start_btn.state(["disabled"])
+            if not self._closing:
+                self.sim_stop_btn.state(["!disabled"])
+            self._log_append("✓ 仿真已启动，三维画面显示在主窗口中", "ok")
+        elif kind in ("closed", "sim_closed"):
+            self._sim_hint_text = "仿真出错，请展开日志" if self._sim_failed else "三维预览已停止；手动和视觉控制可继续使用"
+            self.sim_status_label.config(text="仿真出错" if self._sim_failed else "未启动",
+                                         foreground="#b00" if self._sim_failed else "#555")
+            self.sim_stop_btn.state(["disabled"])
+            if not self._closing:
+                self.sim_start_btn.state(["!disabled"])
             self._refresh_task_controls()
-            self._log_append(f"同步模式: {label}", "ok")
+            self._log_append("仿真已停止")
+        elif kind == "mode":
+            _, mode, self._input_epoch, source = payload
+            self._control_pending = False
+            self.control_mode_var.set(mode)
+            self.control_source_var.set(next(label for label, value in CONTROL_SOURCES.items() if value == source))
+            self.control_status_label.config(text=CONTROL_LABELS[mode],
+                                             foreground="#555" if mode == "off" else "green")
+            self._refresh_task_controls()
+            self._log_append(CONTROL_LABELS[mode])
         elif kind == "pose":
-            # reverse 模式下把真机实际姿态反映到滑杆,避免滑杆停在旧目标上。
-            # 收到的已经是**仿真序的归一化量**(worker 那边排好的),这里直接用,
-            # 不再自己换算 —— 映射表只应该存在一份。
+            # 接管 / 视觉目标已按统一关节顺序排列，回显不生成输入命令。
             self._set_sliders(payload[1])
         elif kind == "stalled":
             # 真机侧「顶住了」的那几路。标红是为了让人**当场看见**是哪一路顶住
@@ -1324,19 +1612,21 @@ class App(tk.Tk):
             self.vision_status_label.config(text=label,
                 foreground="green" if state["control_ready"] else "#b60")
         elif kind == "warn":
+            if self.control_mode_var.get() == "off":
+                self.control_status_label.config(text=payload[1], foreground="#b00")
             self._log_append("⚠ " + payload[1], "warn")
-        elif kind == "sim_ready":
-            self.sim_status_label.config(text="仿真运行中", foreground="green")
-        elif kind == "sim_closed":
-            self.sim_status_label.config(text="未启动", foreground="#555")
-            self.sim_mode_var.set("off")
-            self._set_sliders_enabled(True)
-            self._refresh_task_controls()
-            self._log_append("MuJoCo viewer 已关闭")
         elif kind in ("error", "sim_error"):
             # sim_error 是 SimSync 线程自己抛的(模型加载失败、渲染线程异常)。
             # 漏掉这个分支的话,仿真起不来时界面完全静默,只能去翻 gui.log。
             self._log_append("✗ " + payload[1], "warn")
+            if kind == "sim_error" or self.worker.sim is None:
+                if not self._closing:
+                    self.sim_start_btn.state(["!disabled"])
+                self.sim_stop_btn.state(["disabled"])
+            if kind == "sim_error":
+                self._sim_failed = True
+                self._sim_hint_text = "仿真出错，请展开日志"
+                self.sim_status_label.config(text="仿真出错", foreground="#b00")
 
     def _set_progress(self, i, total):
         # 简单进度条,放在状态区
@@ -1344,6 +1634,9 @@ class App(tk.Tk):
         self.info_label.config(text=f"{self.info_label.cget('text')} · {pct}%")
 
     def _refresh_motors(self, pos, cur):
+        actual = reorder_real_to_sim([self.worker.cal.norm_from_pos(i, p) for i, p in enumerate(pos)])
+        for variable, value in zip(self.actual_value_vars, actual):
+            variable.set(f"实际 {value:.2f}")
         for i in range(N_MOTORS):
             self.pos_labels[i].config(text=str(pos[i]))
             self.cur_labels[i].config(text=str(cur[i]))

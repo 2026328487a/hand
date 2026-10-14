@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest.mock import patch
 import uuid
@@ -13,6 +14,91 @@ import gui_startup
 
 
 class StartupTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "Windows DPI / GLFW")
+    def test_glfw_cycles_preserve_gui_scaling(self):
+        # DPI 是不可逆的进程设置，必须用新进程验证；使用真实 GLFW 隐藏窗口。
+        code = textwrap.dedent('''
+            import ctypes
+            from concurrent.futures import ThreadPoolExecutor
+            from pathlib import Path
+            import sys
+            from tkinter import font
+            from unittest.mock import patch
+
+            import glfw
+            import gui_control as gui
+            from gui_startup import configure_window_scaling
+
+            shcore = ctypes.WinDLL('shcore')
+            shcore.GetProcessDpiAwareness.argtypes = [
+                ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+            shcore.GetProcessDpiAwareness.restype = ctypes.c_long
+            mode = int(sys.argv[2])
+            if mode >= 0:
+                assert shcore.SetProcessDpiAwareness(mode) == 0
+
+            original_init = gui.tk.Tk.__init__
+            def hidden_init(self, *args, **kwargs):
+                original_init(self, *args, **kwargs)
+                self.withdraw()
+
+            def snapshot(app):
+                app.update()
+                awareness = ctypes.c_int(-1)
+                assert shcore.GetProcessDpiAwareness(
+                    None, ctypes.byref(awareness)) == 0
+                return (awareness.value, app.tk.call('tk', 'scaling'),
+                        app.winfo_screenwidth(), app.winfo_screenheight(),
+                        app.winfo_reqwidth(), app.winfo_reqheight(),
+                        font.nametofont('TkDefaultFont').metrics(),
+                        app.status_label.winfo_reqwidth(),
+                        app.status_label.winfo_reqheight())
+
+            def open_window():
+                assert glfw.init(), 'GLFW initialization failed'
+                glfw.window_hint(glfw.VISIBLE, glfw.FALSE)
+                window = glfw.create_window(400, 300, 'DPI regression', None, None)
+                assert window, 'GLFW window creation failed'
+                glfw.poll_events()
+                return window
+
+            def close_window(window):
+                glfw.destroy_window(window)
+                glfw.terminate()
+
+            with patch.object(gui.tk.Tk, '__init__', hidden_init), \\
+                    patch.object(gui.App, '_refresh_cameras'), \\
+                    patch.object(gui, '__file__', str(Path(sys.argv[1]) / 'gui_control.py')), \\
+                    patch.object(gui.ROHand, 'open', side_effect=AssertionError('hardware access')):
+                app = gui.App(gui.Calibration.load())
+                try:
+                    before = snapshot(app)
+                    assert before[0] == max(0, mode), before
+                    # 重复调用及已由宿主设置 DPI 的入口也应安全。
+                    configure_window_scaling()
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        for cycle in range(2):
+                            window = pool.submit(open_window).result(timeout=10)
+                            try:
+                                during = snapshot(app)
+                                assert during == before, (cycle, before, during)
+                            finally:
+                                pool.submit(close_window, window).result(timeout=10)
+                            after = snapshot(app)
+                            assert after == before, (cycle, before, after)
+                finally:
+                    app._on_close()
+                    app.mainloop()
+                assert not app.worker.is_alive()
+        ''')
+        for mode in (-1, 1):  # 默认 Python 进程；宿主已启用 system-aware。
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as folder:
+                result = subprocess.run(
+                    [sys.executable, "-c", code, folder, str(mode)],
+                    cwd=gui_startup.ROOT, capture_output=True, timeout=30)
+                self.assertEqual(result.returncode, 0,
+                                 result.stderr.decode(errors="replace"))
+
     def test_pythonw_errors_are_logged_before_dialog(self):
         previous_cwd = Path.cwd()
         with tempfile.TemporaryDirectory(prefix="dexhand 启动 ") as folder:

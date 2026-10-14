@@ -257,7 +257,7 @@ class ROHand:
             raise HandError("FingerStop", _err(err), self._rerr[0])
 
     def wait_settled(self, tol: int = 200, timeout: float = 4.0,
-                     poll: float = 0.05) -> bool:
+                     poll: float = 0.05, should_cancel=None) -> bool:
         """等到位置不再变化。
 
         不用"到达目标"作判据 —— 手指被挡住时永远到不了目标位,那样会一直等到
@@ -267,6 +267,9 @@ class ROHand:
         prev = self.read_pos()
         stable = 0
         while time.perf_counter() < deadline:
+            if should_cancel is not None and should_cancel():
+                self.stop()
+                raise InterruptedError("动作已取消")
             time.sleep(poll)
             cur = self.read_pos()
             if max(abs(a - b) for a, b in zip(cur, prev)) <= tol:

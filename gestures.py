@@ -199,12 +199,18 @@ def _thumb_clearance_step(cur_norms: list, target_norms: list):
 
 def play(hand: ROHand, cal: Calibration, gesture: Gesture,
          prev_norms=None, verbose: bool = True, check_current: bool = True,
-         on_step=None):
+         on_step=None, should_cancel=None):
     """执行一个手势,返回结束时的归一化姿态。
 
     on_step 可选回调,每完成一步调用一次:on_step(i, total, norms, pose,
     contact)。GUI 用它拿进度;命令行用 verbose 打印时传 None。
     """
+    def check_cancelled():
+        if should_cancel is not None and should_cancel():
+            hand.stop()
+            raise InterruptedError("动作已取消")
+
+    check_cancelled()
     norms = list(prev_norms) if prev_norms else [0.0] * N_MOTORS
     total = len(gesture.steps)
     if verbose:
@@ -220,6 +226,7 @@ def play(hand: ROHand, cal: Calibration, gesture: Gesture,
                 print("   (插入让位步:先松开拇指再转)")
 
     for i, step in enumerate(steps, 1):
+        check_cancelled()
         norms = resolve(step, norms)
         pose = cal.pose_from_norm(norms)
         contact = None
@@ -235,9 +242,14 @@ def play(hand: ROHand, cal: Calibration, gesture: Gesture,
         else:
             hand.move(pose, speed=step.speed)
             if step.settle:
-                hand.wait_settled(tol=200, timeout=3.0)
+                kwargs = {} if should_cancel is None else {"should_cancel": should_cancel}
+                hand.wait_settled(tol=200, timeout=3.0, **kwargs)
         if step.dwell:
-            time.sleep(step.dwell)
+            deadline = time.monotonic() + step.dwell
+            while time.monotonic() < deadline:
+                check_cancelled()
+                time.sleep(min(0.02, max(0, deadline - time.monotonic())))
+        check_cancelled()
         if on_step is not None:
             on_step(i, total, list(norms), list(pose),
                     ("contact" if touched else None))

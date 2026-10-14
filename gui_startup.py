@@ -18,6 +18,26 @@ APP_NAME = "灵巧手控制台"
 MUTEX_NAME = r"Local\ROH_LiteS001_Control"
 
 
+def configure_window_scaling():
+    """创建 Tk 前固定 Windows 的系统缩放，避免 GLFW 中途改变进程 DPI。
+
+    当前界面使用固定像素布局，保留原先由 Windows 放大的行为
+    (PROCESS_DPI_UNAWARE)，不能只启用高 DPI 而不同时调整整个布局。
+    即使默认已是 unaware，也必须显式设置，才能阻止 glfw.init() 改写。
+    Windows 8.1+ 支持此 API，与本项目 Python 3.11 的系统要求一致。
+    """
+    if os.name != "nt":
+        return
+    shcore = ctypes.WinDLL("shcore")
+    shcore.SetProcessDpiAwareness.argtypes = [ctypes.c_int]
+    shcore.SetProcessDpiAwareness.restype = ctypes.c_long
+    result = shcore.SetProcessDpiAwareness(0)
+    # E_ACCESSDENIED 表示本进程已经设置过（包括宿主/manifest）；保留它。
+    # 同时允许 run_gui 和直接构造 App 两条入口重复调用。
+    if result not in (0, -2147024891):
+        raise OSError(f"SetProcessDpiAwareness failed: HRESULT 0x{result & 0xFFFFFFFF:08X}")
+
+
 class AlreadyRunningError(Exception):
     pass
 
@@ -135,6 +155,7 @@ def run_gui(entry):
         print(f"Python：{sys.executable}\n项目目录：{ROOT}\n启动日志：{log_path}")
         with SingleInstance():
             os.chdir(ROOT)
+            configure_window_scaling()
             result = entry()
             print(f"GUI 已退出，退出码：{result or 0}")
             return result or 0

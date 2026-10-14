@@ -10,7 +10,7 @@ import numpy as np
 
 from calibration import Calibration
 from gui_control import HandWorker
-from sim_sync import FollowSender
+from control_core import SafeSender as FollowSender
 from vision_hand import VisionSource
 
 
@@ -124,6 +124,8 @@ class VideoFollowTests(unittest.TestCase):
         self.worker.sim.action.return_value = np.zeros(6)
         self.worker.sim.alive.return_value = True
         self.worker.hand = Mock()
+        self.worker.hand.read_pos.return_value = self.worker.cal.pose_from_norm([0.0] * 6)
+        self.worker.hand.read_currents.return_value = [0] * 6
         self.worker._connected = True
         self.worker.vision = Mock()
         self.worker.vision.snapshot.return_value = dict(
@@ -132,21 +134,24 @@ class VideoFollowTests(unittest.TestCase):
         self.worker.vision.is_alive.return_value = True
 
     def test_no_hand_refuses_follow_without_sending_motion(self):
-        self.worker._set_sim_mode('follow')
-        self.assertEqual(self.worker.sim_mode, 'off')
+        self.worker._set_control_mode('vision')
+        self.assertEqual(self.worker.control_mode, 'off')
         self.worker.hand.move.assert_not_called()
 
     def test_tracking_loss_holds_follow_and_keeps_last_target(self):
-        self.worker.sim_mode = 'follow'
+        self.worker.control_mode = 'vision'
+        self.worker.control_source = 'vision'
         sender = self.worker.sender = Mock()
         sender.stalled = []
-        self.worker._sim_tick()
-        self.assertEqual(self.worker.sim_mode, 'follow')
+        sender.positions = self.worker.hand.read_pos.return_value
+        self.worker._control_tick()
+        self.assertEqual(self.worker.control_mode, 'vision')
         self.worker.hand.stop.assert_not_called()
-        sender.tick.assert_called_once_with(self.worker.hand)
+        sender.tick.assert_called_once_with(self.worker.hand, should_cancel=self.worker._task_cancel.is_set)
 
     def test_video_stop_does_not_join_on_can_thread(self):
-        self.worker.sim_mode = 'follow'
+        self.worker.control_mode = 'vision'
+        self.worker.control_source = 'vision'
         self.worker._stop_vision()
         self.worker.vision.stop.assert_called_once()
         self.worker.vision.join.assert_not_called()
@@ -169,9 +174,10 @@ class VideoFollowTests(unittest.TestCase):
         self.assertIs(self.worker.vision, previous)
 
     def test_old_source_event_cannot_stop_new_follow(self):
-        self.worker.sim_mode = 'follow'
+        self.worker.control_mode = 'vision'
+        self.worker.control_source = 'vision'
         self.worker._on_vision_event(Mock(), 'vision_error', ('old error',))
-        self.assertEqual(self.worker.sim_mode, 'follow')
+        self.assertEqual(self.worker.control_mode, 'vision')
         self.worker.hand.stop.assert_not_called()
         self.assertTrue(self.worker.events.empty())
 
@@ -180,6 +186,23 @@ class VideoFollowTests(unittest.TestCase):
         self.worker._handle_sim_lifecycle(Mock(), 'sim_closed', ())
         self.assertIs(self.worker.sim, current)
         self.worker.vision.stop.assert_not_called()
+
+    def test_sim_start_is_embedded_and_does_not_wait_on_can_thread(self):
+        self.worker.sim = None
+        with patch('gui_control.SimSync') as factory:
+            self.worker._start_sim()
+        self.assertEqual(factory.call_args.kwargs['display'], 'embedded')
+        factory.return_value.start.assert_called_once()
+        factory.return_value.wait_ready.assert_not_called()
+        self.worker.vision.set_sync.assert_not_called()
+        self.worker._handle_sim_lifecycle(factory.return_value, 'sim_ready', ())
+        self.worker.vision.set_sync.assert_not_called()
+
+    def test_follow_waits_for_simulation_ready(self):
+        self.worker.sim.wait_ready.return_value = False
+        self.worker._set_control_mode('follow')
+        self.assertEqual(self.worker.control_mode, 'off')
+        self.worker.hand.move.assert_not_called()
 
     def test_failed_current_feedback_prevents_motion(self):
         sync = Mock()
@@ -216,7 +239,7 @@ class VideoFollowTests(unittest.TestCase):
         self.worker.commands = Mock()
         self.worker.commands.get.side_effect = get
         with patch('gui_control.time.monotonic', side_effect=lambda: clock[0]), \
-                patch.object(self.worker, '_sim_tick', side_effect=tick), \
+                patch.object(self.worker, '_control_tick', side_effect=tick), \
                 patch.object(self.worker, '_maybe_report_state'), \
                 patch.object(self.worker, '_do_disconnect'), \
                 patch.object(self.worker, '_stop_sim'):
@@ -224,7 +247,8 @@ class VideoFollowTests(unittest.TestCase):
         np.testing.assert_allclose(np.diff(ticks), expected_period, atol=1e-9)
 
     def test_follow_ui_reuses_feedback_without_extra_can_reads(self):
-        self.worker.sim_mode = 'follow'
+        self.worker.control_mode = 'vision'
+        self.worker.control_source = 'vision'
         self.worker.sender = Mock(positions=[100] * 6, currents=[20] * 6)
         self.worker._maybe_report_state()
         self.worker.hand.read_pos.assert_not_called()

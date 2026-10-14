@@ -10,6 +10,7 @@ logs/
 contact_out/
 emi_out/
 task_logs/
+test_artifacts/
 calibration_capture.mp4
 calibration_capture.json
 # Downloaded MediaPipe assets (optional; see README.md)

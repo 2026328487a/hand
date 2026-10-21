@@ -5,7 +5,7 @@
 
 数据流(接在已有架构的最上游,下游原封不动):
 
-    视频帧 → MediaPipe 21 关键点 → 6 路归一化 → SimSync.set_target()
+    视频帧 → MediaPipe 21 关键点 → 几何特征初值 → 六路指尖优化 → 平滑 → 控制目标
                                                       ↓ slew 限速
                                                   MuJoCo 显示
                                                       ↓ follow 模式
@@ -171,7 +171,7 @@ DEFAULT_MAP = (
 
 
 class LandmarkMapper:
-    """特征 → 6 路归一化,带指数平滑和丢帧保持。
+    """特征初值 → 可选六路指尖优化 → 滤波,模型/求解失败回退特征映射。
 
     为什么要平滑:关键点本身有抖动,直接喂下去六个电机会持续小幅抽搐 —— 电机
     不像仿真,每次微动都是真实的机械磨损和电流。EMA 很便宜,效果立竿见影。
@@ -182,12 +182,23 @@ class LandmarkMapper:
 
     def __init__(self, maps=DEFAULT_MAP, ema: float = 0.15,
                  hold_frames: int = 15, median_window: int = 3,
-                 deadband: float = 0.003):
+                 deadband: float = 0.003, retargeting: str = "hybrid",
+                 calibration=None, kinematics_factory=None, robot_left=False):
+        if retargeting not in ("hybrid", "features"):
+            raise ValueError(f"unknown retargeting mode: {retargeting}")
         self.maps = tuple(maps)
         self.ema = float(min(1.0, max(0.0, ema)))
         self.hold_frames = hold_frames
         self.median_window = max(1, int(median_window))
         self.deadband = max(0.0, float(deadband))
+        self.retargeting = retargeting
+        self.calibration = calibration
+        self.kinematics_factory = kinematics_factory
+        self.robot_left = bool(robot_left)
+        self._optimizers = {}
+        self._unavailable = {}
+        self._left = None
+        self.retarget_status = {"mode": retargeting, "state": "waiting"}
         self._smooth = None
         self._raw_history = deque(maxlen=self.median_window)
         self._missing = 0
@@ -196,11 +207,63 @@ class LandmarkMapper:
         self._smooth = None
         self._raw_history.clear()
         self._missing = 0
+        self._left = None
+        for optimizer in self._optimizers.values():
+            optimizer.reset()
+        self.retarget_status = {"mode": self.retargeting, "state": "waiting"}
+
+    def _refine(self, p, raw, left):
+        if self.retargeting == "features":
+            self.retarget_status = {"mode": "features", "state": "features"}
+            return raw
+        # Human handedness determines target mirroring, not which robot is installed.
+        side = self.robot_left
+        try:
+            if side in self._unavailable:
+                raise RuntimeError(self._unavailable[side])
+            if side not in self._optimizers:
+                from fingertip_retarget import FingertipRetargeter, LiteS001Kinematics
+                factory = self.kinematics_factory or LiteS001Kinematics
+                try:
+                    kin = factory(left=side, calibration=self.calibration)
+                    self._optimizers[side] = FingertipRetargeter(kin)
+                except Exception as exc:
+                    self._unavailable[side] = str(exc)
+                    raise
+            optimizer = self._optimizers[side]
+            refined = optimizer.refine(p, raw, bool(left))
+            self.retarget_status = dict(optimizer.status, mode="hybrid")
+            return refined
+        except Exception as exc:
+            # A failed model/solve never disables the existing visual control path.
+            optimizer = self._optimizers.get(side)
+            if optimizer is not None:
+                optimizer.reset()
+            self.retarget_status = {"mode": "hybrid", "state": "fallback", "reason": str(exc)}
+            return raw
 
     def update(self, p, left: bool):
         """有检测结果时调。返回平滑后的 6 路归一化(仿真序)。"""
+        p = np.asarray(p, dtype=float)
+        if p.shape != (21, 3) or not np.isfinite(p).all():
+            raise ValueError("expected 21 finite 3D landmarks")
+        if min(np.linalg.norm(p[M_MCP] - p[WRIST]),
+               np.linalg.norm(p[I_MCP] - p[P_MCP])) < 1e-5:
+            raise ValueError("degenerate palm landmarks")
+        if self._left is not None and self._left != bool(left):
+            self.reset()
+        self._left = bool(left)
         measured = features(p, left)
         raw = np.array([m.norm(measured) for m in self.maps])
+        raw = self._refine(p, raw, left)
+        return self.filter_action(raw)
+
+    def filter_action(self, raw):
+        """Shared post-retargeting filter, also used for offline comparisons."""
+        raw = np.asarray(raw, dtype=float)
+        if raw.shape != (6,) or not np.isfinite(raw).all():
+            raise ValueError("expected six finite mapped commands")
+        raw = np.clip(raw, 0., 1.)
         # MediaPipe 的单帧误差通常是孤立尖峰；中值滤波先去掉尖峰，EMA
         # 再负责连续变化的平滑，避免单个坏帧把姿态条和真机拉动一下。
         self._raw_history.append(raw)
@@ -220,6 +283,8 @@ class LandmarkMapper:
         """这一帧没检测到手。返回该保持的姿态,或 None(丢太久了)。"""
         self._missing += 1
         if self._smooth is None or self._missing > self.hold_frames:
+            for optimizer in self._optimizers.values():
+                optimizer.reset()
             return None
         return self._smooth.copy()
 
@@ -318,10 +383,12 @@ class VisionSource(threading.Thread):
 
     def __init__(self, source, sync=None, mapper=None, model_path=DEFAULT_MODEL,
                  loop=True, preview=False, realtime=True, on_event=None,
-                 mirror=False, handedness="any"):
+                 mirror=False, handedness="any", retargeting="hybrid", calibration=None,
+                 robot_left=False):
         super().__init__(daemon=True, name="VisionSource")
         self.source, self.sync = source, sync
-        self.mapper = mapper or LandmarkMapper()
+        self.mapper = mapper if mapper is not None else LandmarkMapper(
+            retargeting=retargeting, calibration=calibration, robot_left=robot_left)
         self.model_path = model_path
         self.loop, self.preview, self.realtime = loop, preview, realtime
         self.mirror, self.handedness = mirror, handedness
@@ -342,6 +409,8 @@ class VisionSource(threading.Thread):
         self._latency_ms = 0.0
         self._camera = None
         self._sequence = 0
+        self._retarget_status = {"mode": self.mapper.retargeting, "state": "waiting"}
+        self._retarget_warning = None
 
     def set_sync(self, sync):
         with self._lock:
@@ -381,7 +450,8 @@ class VisionSource(threading.Thread):
                                        and self.detected and age < self.LOST_TIMEOUT
                                        and frame_age < self.LOST_TIMEOUT),
                         tracking_lost=(age >= self.LOST_TIMEOUT or frame_age >= self.LOST_TIMEOUT),
-                        error=None if self._err is None else str(self._err))
+                        error=None if self._err is None else str(self._err),
+                        retargeting=dict(self._retarget_status))
 
     def preview_frame(self, after=0):
         with self._lock:
@@ -447,7 +517,18 @@ class VisionSource(threading.Thread):
                     image_lm = None
                 else:
                     world, left, image_lm = res
-                    norms = self.mapper.update(world, left)
+                    try:
+                        norms = self.mapper.update(world, left)
+                    except ValueError:
+                        # Invalid geometry is tracking loss, never a new motor target.
+                        res = None
+                        norms = self.mapper.miss()
+                        image_lm = None
+                retarget_status = dict(self.mapper.retarget_status)
+                warning = retarget_status.get("reason") if retarget_status["state"] == "fallback" else None
+                if warning and warning != self._retarget_warning:
+                    self.on_event("retarget_fallback", f"指尖优化不可用，使用原有映射: {warning}")
+                self._retarget_warning = warning
                 processed = time.perf_counter()
                 frame_i += 1
                 with self._lock:
@@ -456,6 +537,7 @@ class VisionSource(threading.Thread):
                     was_detected = self.detected
                     self.detected = res is not None
                     self.norms = None if norms is None else norms.copy()
+                    self._retarget_status = retarget_status
                     self._last_frame = captured
                     self._latency_ms = (processed - captured) * 1000.0
                     self.fps_real = frame_i / max(processed - started, 0.001)
@@ -599,10 +681,14 @@ def main() -> int:
     ap.add_argument("--mode", choices=["normalized", "angle"],
                     default="normalized")
     ap.add_argument("--ema", type=float, default=0.15, help="平滑系数,越小越稳")
+    ap.add_argument("--retargeting", choices=("hybrid", "features"), default="hybrid",
+                    help="hybrid: 六路指尖优化（默认）；features: 原有特征映射")
     ap.add_argument("--left", action="store_true", help="用左手仿真模型")
     ap.add_argument("--mirror", action="store_true", help="镜像预览，不改变控制坐标")
     ap.add_argument("--handedness", choices=("any", "Left", "Right"), default="any")
     args = ap.parse_args()
+    if not args.calibrate and args.retargeting == "hybrid" and args.mode == "angle":
+        ap.error("指尖优化使用标定后的归一化电机命令；请用 --mode normalized，或切换 --retargeting features")
 
     source = args.camera if args.camera is not None else args.video
     if args.calibrate:
@@ -622,7 +708,9 @@ def main() -> int:
         sync.start()
         if not sync.wait_ready():
             raise RuntimeError("仿真没能启动")
-        vision = VisionSource(source, sync, mapper=LandmarkMapper(ema=args.ema),
+        vision = VisionSource(source, sync, mapper=LandmarkMapper(
+                                  ema=args.ema, retargeting=args.retargeting,
+                                  robot_left=args.left),
                               model_path=args.model, loop=not args.no_loop,
                               preview=args.preview, mirror=args.mirror,
                               handedness=args.handedness,

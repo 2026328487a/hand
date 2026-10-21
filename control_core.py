@@ -50,8 +50,9 @@ THUMB_BEND_WHILE_MOVING = 0.30
 class MotionController:
     """Thread-safe target mailbox and motion planner; never opens hardware."""
 
-    def __init__(self, slew=DEFAULT_SLEW):
+    def __init__(self, slew=DEFAULT_SLEW, *, rate_limit=True):
         self.slew = slew
+        self.rate_limit = bool(rate_limit)
         self._lock = threading.Lock()
         self._target = np.zeros(N_MOTORS)
         self._ctrl = np.zeros(N_MOTORS)
@@ -128,11 +129,16 @@ class MotionController:
                 eff[SIM_TB] = min(eff[SIM_TB], THUMB_BEND_WHILE_MOVING)
             eff[SIM_TB] = min(eff[SIM_TB], THUMB_BEND_MAX)
 
-            step = self.slew * dt
+            step = self.slew * dt if self.rate_limit else 1.0
             self._ctrl = np.clip(cur + np.clip(eff - cur, -step, step), 0.0, 1.0)
             return self._ctrl.copy()
 
     # ---------------- 外部接口(线程安全) ----------------
+
+    def set_rate_limit(self, enabled):
+        """Toggle optional target interpolation; mechanical guards still apply."""
+        with self._lock:
+            self.rate_limit = bool(enabled)
 
     def set_target(self, norms_sim):
         """设定目标姿态(归一化,仿真序)。会打断正在播的手势。"""
@@ -220,6 +226,7 @@ class MotionController:
                 "interlock": self._interlock,
                 "script": len(self._script),
                 "external": self._external is not None,
+                "rate_limit": self.rate_limit,
             }
 
 
@@ -244,7 +251,8 @@ class SafeSender:
     def __init__(self, cal: Calibration, sync: MotionController,
                  mode: str = "normalized", speed: int = DEFAULT_SPEED,
                  deadband: int = DEADBAND, stall_ma: int = STALL_MA,
-                 monitor_period: float = 0.04, on_warn=None):
+                 monitor_period: float = 0.04, on_warn=None,
+                 stagger_currents: bool = False):
         self.cal = cal
         self.sync = sync
         self.mode = mode
@@ -254,11 +262,15 @@ class SafeSender:
         self.stall_ma = stall_ma
         # 六路电流约 18.6ms，位置约 11ms；调用方须把 CAN 耗时计入周期。
         self.monitor_period = monitor_period
+        self.stagger_currents = bool(stagger_currents)
+        self._current_group = None
+        self.feedback_ready = False
         self.on_warn = on_warn or (lambda msg: None)
         self.currents = [0] * N_MOTORS
         self.positions = [0] * N_MOTORS  # 最近一次读到的真机位置
         self.stalled: list = []          # 当前被钉住的电机 index,给界面看
         self.waiting_thumb = False       # 拇指是否正在等四指跟上
+        self._rotation_clearance = False
         self._clamp: list = [None] * N_MOTORS
         self._last_pose = None
         self._last_speed = None
@@ -292,7 +304,14 @@ class SafeSender:
         if now - self._cur_t >= self.monitor_period:
             self._cur_t = now
             # 没有新反馈就不能继续按旧电流/位置下发；交由调用方停止跟随。
-            cur = hand.read_currents()
+            sampled = list(range(N_MOTORS))
+            if self.stagger_currents and self._current_group is not None:
+                sampled = list(range(self._current_group * 3, self._current_group * 3 + 3))
+                cur = list(self.currents)
+                for i in sampled:
+                    cur[i] = hand.read_current(i)
+            else:
+                cur = hand.read_currents()
             pos = hand.read_pos()
             if (cur is None or pos is None or len(cur) != N_MOTORS
                     or len(pos) != N_MOTORS
@@ -301,7 +320,10 @@ class SafeSender:
             if cur is not None and pos is not None:
                 self.currents = cur
                 self.positions = pos
-                hot = [i for i, c in enumerate(cur) if c > self.stall_ma]
+                self.feedback_ready = True
+                if self.stagger_currents:
+                    self._current_group = 0 if self._current_group is None else 1 - self._current_group
+                hot = [i for i in sampled if cur[i] > self.stall_ma]
                 for i in hot:
                     new = (pos[i] if self._clamp[i] is None
                            else min(self._clamp[i], pos[i]))
@@ -338,6 +360,21 @@ class SafeSender:
         if self.waiting_thumb:
             out[tb] = min(out[tb],
                           self.cal.pos_from_norm(tb, THUMB_BEND_WHILE_MOVING))
+        # With interpolation disabled, a retraction command is not proof that
+        # the physical thumb has cleared. Gate rotation on measured position.
+        tr = SIM_TO_REAL[SIM_TR]
+        rotation_gap = abs(self.cal.norm_from_pos(tr, want[tr])
+                           - self.cal.norm_from_pos(tr, self.positions[tr]))
+        actual_bend = self.cal.norm_from_pos(tb, self.positions[tb])
+        if self._rotation_clearance:
+            if rotation_gap <= THUMB_ROT_MOVE * .5:
+                self._rotation_clearance = False
+        elif actual_bend > THUMB_BEND_SAFE and rotation_gap > THUMB_ROT_MOVE:
+            self._rotation_clearance = True
+        if self._rotation_clearance:
+            out[tb] = self.cal.pos_from_norm(tb, 0.)
+            if actual_bend > THUMB_BEND_SAFE:
+                out[tr] = self.positions[tr]
         return out
 
     def resync(self):
@@ -346,6 +383,10 @@ class SafeSender:
         self._clamp = [None] * N_MOTORS
         self.stalled = []
         self.waiting_thumb = False
+        self._rotation_clearance = False
+        self._current_group = None
+        self.feedback_ready = False
+        self._cur_t = 0.0
 
 
 def align_control_to_hand(sync: MotionController, cal: Calibration, hand: ROHand):

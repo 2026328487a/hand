@@ -11,6 +11,48 @@ from test_direct_control import FakeHand
 
 
 class DirectGuiTests(unittest.TestCase):
+    def test_fingertip_mode_selector_and_fallback_status_without_devices(self):
+        errors = []
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(gui, '__file__', str(Path(folder) / 'gui_control.py')), \
+                patch.object(gui.App, '_refresh_cameras'), \
+                patch.object(gui.ROHand, 'open', side_effect=AssertionError('hardware access')):
+            app = gui.App(gui.Calibration.load())
+            app.withdraw()
+            app.report_callback_exception = lambda *exc: errors.append(exc)
+            try:
+                self.assertEqual(app.vision_retarget_var.get(), '指尖优化')
+                self.assertFalse(app.rate_limit_var.get())
+                with patch.object(app.worker, 'put') as send:
+                    app.rate_limit_check.invoke()
+                self.assertEqual(send.call_args.args[0], ('rate_limit', True))
+                app.follow_hz_var.set('45')
+                with patch.object(app.worker, 'put') as send:
+                    app.follow_hz_apply_btn.invoke()
+                self.assertEqual(send.call_args.args[0], ('follow_hz', 45))
+                app._set_vision_controls(True)
+                self.assertEqual(str(app.vision_retarget_combo.cget('state')), 'disabled')
+                app._set_vision_controls(False)
+                self.assertEqual(str(app.vision_retarget_combo.cget('state')), 'readonly')
+                state = dict(state='tracking', frame_age=0, fps=30, latency_ms=40,
+                             control_ready=True, retargeting={'state': 'fallback'})
+                app._handle_sim_event(('vision_state', state))
+                self.assertIn('原有映射回退', app.vision_status_label.cget('text'))
+                app._handle_sim_event(('retarget_fallback', '模型不可用，使用原有映射'))
+                self.assertIn('模型不可用', app.log_text.get('1.0', 'end'))
+                app.vision_source_var.set('视频文件')
+                video = Path(folder) / 'test.mp4'
+                video.touch()
+                app.vision_path_var.set(str(video))
+                app.vision_retarget_var.set('原有映射')
+                with patch.object(app.worker, 'put') as send:
+                    app._start_vision()
+                self.assertEqual(send.call_args.args[0][-1], 'features')
+            finally:
+                app._on_close()
+                app.mainloop()
+            self.assertFalse(errors, errors)
+
     def test_manual_vision_switch_and_pause_without_simulation(self):
         cal = gui.Calibration.load()
         hand = FakeHand(cal)

@@ -28,6 +28,9 @@ class FakeHand:
     def read_currents(self):
         return list(self.currents)
 
+    def read_current(self, motor):
+        return self.currents[motor]
+
     def move(self, pose, speed=255):
         self.pos = list(pose)
         self.moves.append((list(pose), speed))
@@ -59,7 +62,7 @@ class DirectControlTests(unittest.TestCase):
         self.worker.vision = source
         return source, state
 
-    def test_manual_control_without_simulation_aligns_then_slews(self):
+    def test_manual_control_without_simulation_aligns_then_tracks_directly(self):
         self.hand.pos = self.worker.cal.pose_from_norm([0.0, 0.4, 0.0, 0.0, 0.0, 0.0])
         self.target(0, 1.0)  # A paused preview must not become the armed target.
         self.worker._set_control_mode("manual")
@@ -69,8 +72,18 @@ class DirectControlTests(unittest.TestCase):
         self.assertEqual(self.hand.moves[-1][0], self.hand.pos)
         self.target(0, 0.8)
         self.tick()
-        self.assertGreater(self.worker.controller.action()[0], 0.4)
-        self.assertLess(self.worker.controller.action()[0], 0.46)
+        self.assertAlmostEqual(self.worker.controller.action()[0], .8)
+
+    def test_optional_software_rate_limit_can_be_enabled(self):
+        self.worker._do_sim_command(('rate_limit', True))
+        self.worker._set_control_mode('manual')
+        self.target(0, .8)
+        self.tick()
+        self.assertGreater(self.worker.controller.action()[0], 0)
+        self.assertLess(self.worker.controller.action()[0], .06)
+        self.worker._do_sim_command(('rate_limit', False))
+        self.tick()
+        self.assertAlmostEqual(self.worker.controller.action()[0], .8)
 
     def test_paused_slider_is_preview_only(self):
         self.target(0, 0.8)

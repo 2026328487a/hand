@@ -116,6 +116,20 @@ class VideoSourceTests(unittest.TestCase):
         self.assertFalse(source.snapshot()['control_ready'])
         self.assertTrue(source.snapshot()['tracking_lost'])
 
+    def test_invalid_geometry_is_tracking_loss_in_source(self):
+        capture = Capture()
+        tracker = Mock()
+        tracker.detect.return_value = np.zeros((21, 3)), False, np.zeros((21, 2))
+        with patch('cv2.VideoCapture', return_value=capture), \
+                patch('vision_hand.HandTracker', return_value=tracker):
+            source = VisionSource('bad.mp4', loop=False, retargeting='features')
+            source.start()
+            source.join(2)
+        self.assertFalse(source.is_alive())
+        self.assertIsNone(source._err)
+        self.assertIsNone(source.norms)
+        self.assertFalse(source.snapshot()['control_ready'])
+
 
 class VideoFollowTests(unittest.TestCase):
     def setUp(self):
@@ -164,6 +178,13 @@ class VideoFollowTests(unittest.TestCase):
             self.worker._start_vision(0)
         source.start.assert_called_once()
         source.wait_ready.assert_not_called()
+
+    def test_retargeting_selection_uses_worker_calibration(self):
+        self.worker.vision = None
+        with patch('gui_control.VisionSource') as factory:
+            self.worker._start_vision('input.mp4', retargeting='features')
+        self.assertEqual(factory.call_args.kwargs['retargeting'], 'features')
+        self.assertIs(factory.call_args.kwargs['calibration'], self.worker.cal)
 
     def test_still_closing_source_cannot_be_replaced(self):
         previous = self.worker.vision
@@ -261,6 +282,17 @@ class VideoFollowTests(unittest.TestCase):
         self.worker._do_sim_command(('follow_speed', 120))
         self.assertEqual(self.worker.follow_speed, 120)
         self.assertEqual(self.worker.sender.speed, 120)
+
+    def test_control_target_frequency_is_configurable(self):
+        self.worker._do_sim_command(('follow_hz', 45))
+        self.assertEqual(self.worker.follow_hz, 45)
+        with self.assertRaises(ValueError):
+            self.worker._do_sim_command(('follow_hz', 0))
+        self.assertEqual(self.worker.follow_hz, 45)
+
+    def test_configured_frequency_drives_actual_worker_schedule(self):
+        self.worker.follow_hz = 45
+        self._check_worker_period(.0203, 1 / 45)
 
 
 if __name__ == '__main__':

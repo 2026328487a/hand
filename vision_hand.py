@@ -1,9 +1,12 @@
-"""从视频里的人手 → 6 路归一化姿态 → 喂给 SimSync(仿真跟着动,真机再跟仿真)。
+"""从视频里的人手生成 6 路归一化姿态，供独立控制核心或 SimSync 使用。
 
 支持摄像头实时输入和视频文件回放。摄像头采集只保留最新帧，避免识别速度
 低于相机帧率时积压；GUI 内嵌预览，CLI 可用 --preview 打开独立预览窗口。
 
-数据流(接在已有架构的最上游,下游原封不动):
+GUI 原样全速：关键点 → 几何特征映射 → 控制核心 → 真机六路同步下发。
+不经过指尖优化、滤波、插值或拇指避让；反馈监视、丢手保持和急停仍独立生效。
+
+优化模式及命令行数据流：
 
     视频帧 → MediaPipe 21 关键点 → 几何特征初值 → 六路指尖优化 → 平滑 → 控制目标
                                                       ↓ slew 限速
@@ -11,8 +14,7 @@
                                                       ↓ follow 模式
                                                   FollowSender → 真机
 
-也就是说视频只是**第三种输入源**,和滑杆、手势按钮平级。限速、拇指让位互锁、
-电流监视这些保护全都在下游,视频这一路白捡。
+视觉作为输入源；下游按所选模式决定是否执行限速、拇指让位互锁和逐路钉住。
 
 关于 MediaPipe 版本(**坑**):官方 demo(roh_demos/gesture_ctrled_rohand)钉的是
 mediapipe 0.10.13,用 `mp.solutions.hands`。装上的 1.0.1 **把整个 mp.solutions
@@ -171,7 +173,7 @@ DEFAULT_MAP = (
 
 
 class LandmarkMapper:
-    """特征初值 → 可选六路指尖优化 → 滤波,模型/求解失败回退特征映射。
+    """direct 原样映射；features 特征滤波；hybrid 优化后滤波并支持回退。
 
     为什么要平滑:关键点本身有抖动,直接喂下去六个电机会持续小幅抽搐 —— 电机
     不像仿真,每次微动都是真实的机械磨损和电流。EMA 很便宜,效果立竿见影。
@@ -184,7 +186,7 @@ class LandmarkMapper:
                  hold_frames: int = 15, median_window: int = 3,
                  deadband: float = 0.003, retargeting: str = "hybrid",
                  calibration=None, kinematics_factory=None, robot_left=False):
-        if retargeting not in ("hybrid", "features"):
+        if retargeting not in ("direct", "hybrid", "features"):
             raise ValueError(f"unknown retargeting mode: {retargeting}")
         self.maps = tuple(maps)
         self.ema = float(min(1.0, max(0.0, ema)))
@@ -213,8 +215,8 @@ class LandmarkMapper:
         self.retarget_status = {"mode": self.retargeting, "state": "waiting"}
 
     def _refine(self, p, raw, left):
-        if self.retargeting == "features":
-            self.retarget_status = {"mode": "features", "state": "features"}
+        if self.retargeting in ("direct", "features"):
+            self.retarget_status = {"mode": self.retargeting, "state": self.retargeting}
             return raw
         # Human handedness determines target mirroring, not which robot is installed.
         side = self.robot_left
@@ -264,6 +266,11 @@ class LandmarkMapper:
         if raw.shape != (6,) or not np.isfinite(raw).all():
             raise ValueError("expected six finite mapped commands")
         raw = np.clip(raw, 0., 1.)
+        if self.retargeting == "direct":
+            # Exact mapped commands: no optimizer, temporal term, median, EMA or deadband.
+            self._smooth = raw.copy()
+            self._missing = 0
+            return raw.copy()
         # MediaPipe 的单帧误差通常是孤立尖峰；中值滤波先去掉尖峰，EMA
         # 再负责连续变化的平滑，避免单个坏帧把姿态条和真机拉动一下。
         self._raw_history.append(raw)

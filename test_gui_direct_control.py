@@ -21,11 +21,14 @@ class DirectGuiTests(unittest.TestCase):
             app.withdraw()
             app.report_callback_exception = lambda *exc: errors.append(exc)
             try:
-                self.assertEqual(app.vision_retarget_var.get(), '指尖优化')
+                self.assertEqual(app.vision_retarget_var.get(), '原样全速')
                 self.assertFalse(app.rate_limit_var.get())
                 with patch.object(app.worker, 'put') as send:
                     app.rate_limit_check.invoke()
                 self.assertEqual(send.call_args.args[0], ('rate_limit', True))
+                with patch.object(app.worker, 'put') as send:
+                    app.collision_avoidance_check.invoke()
+                self.assertEqual(send.call_args.args[0], ('collision_avoidance', False))
                 app.follow_hz_var.set('45')
                 with patch.object(app.worker, 'put') as send:
                     app.follow_hz_apply_btn.invoke()
@@ -44,6 +47,21 @@ class DirectGuiTests(unittest.TestCase):
                 video = Path(folder) / 'test.mp4'
                 video.touch()
                 app.vision_path_var.set(str(video))
+                with patch.object(app.worker, 'put') as send:
+                    app._start_vision()
+                self.assertEqual(send.call_args.args[0][-1], 'direct')
+                app._handle_sim_event(('motion_settings', dict(direct=True, speed=255, hz=60,
+                                                              rate_limit=False, collision_avoidance=False)))
+                self.assertEqual(app.follow_speed_var.get(), '255')
+                self.assertEqual(app.follow_hz_var.get(), '60')
+                self.assertFalse(app.collision_avoidance_var.get())
+                self.assertIn('disabled', app.collision_avoidance_check.state())
+                self.assertIn('disabled', app.rate_limit_check.state())
+                self.assertIn('disabled', app.follow_speed_spin.state())
+                app._handle_sim_event(('motion_settings', dict(direct=False, speed=140, hz=30,
+                                                              rate_limit=False, collision_avoidance=True)))
+                self.assertNotIn('disabled', app.collision_avoidance_check.state())
+                self.assertEqual(app.follow_speed_var.get(), '140')
                 app.vision_retarget_var.set('原有映射')
                 with patch.object(app.worker, 'put') as send:
                     app._start_vision()

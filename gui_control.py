@@ -44,7 +44,7 @@ from task_mode import (DEFAULT_CLOSE_NORM, DEFAULT_CONTACT_MA,
 
 # 仿真模块依赖上级目录的 MuJoCo 模型。GUI 本身仍然应该能在没有仿真工作区
 # 时启动，所以这里故意延迟失败；仿真面板会显示具体原因，而不影响真机面板。
-from control_core import (DOF_CN, MotionController, SafeSender,
+from control_core import (DEADBAND, DOF_CN, MotionController, SafeSender,
                           align_control_to_hand)
 from joint_mapping import reorder_real_to_sim
 try:                                                       # noqa: E402
@@ -68,6 +68,7 @@ except Exception as _vis_exc:                              # noqa: E402
 CODES = ("connect", "disconnect", "stop", "open")
 FOLLOW_HZ = 30
 FOLLOW_SPEED = 140
+DIRECT_FOLLOW_HZ = 60
 CONTROL_SOURCES = {"手动滑杆": "manual", "视觉输入": "vision", "仿真调试": "follow"}
 CONTROL_LABELS = {"off": "已暂停", "manual": "手动滑杆控制中",
                   "vision": "视觉控制中", "follow": "仿真驱动真机"}
@@ -96,9 +97,11 @@ class HandWorker(threading.Thread):
         self._idle = False
         self._connected = False
         self.sim = None
-        # Servo speed still limits physical motion. Software interpolation is
-        # optional; collision interlocks and feedback guards stay independent.
+        # Direct vision uses exact commands at full servo speed. Optional
+        # interpolation/avoidance and feedback protection are separate policies.
         self.rate_limit = False
+        self.collision_avoidance = True
+        self.vision_retargeting = "direct"
         self.controller = MotionController(rate_limit=self.rate_limit)
         self.control_source = "manual"
         self.preview_mode = "target"
@@ -169,7 +172,7 @@ class HandWorker(threading.Thread):
                 self._do_sim_command(cmd)
 
     def run(self):
-        period = 1.0 / self.follow_hz
+        period = self._control_period()
         next_tick = time.monotonic() + period
         while True:
             try:
@@ -184,7 +187,7 @@ class HandWorker(threading.Thread):
                     return
                 if cmd is not None:
                     self._dispatch(cmd)
-                updated_period = 1.0 / self.follow_hz
+                updated_period = self._control_period()
                 if updated_period != period:
                     period = updated_period
                     next_tick = time.monotonic() + period
@@ -203,6 +206,33 @@ class HandWorker(threading.Thread):
 
     def _mode_event(self):
         self._send_sim("mode", self.control_mode, self._input_epoch, self.control_source)
+        self._motion_settings_event()
+
+    def _direct_vision(self, source=None):
+        return (source or self.control_source) == "vision" and self.vision_retargeting == "direct"
+
+    def _control_period(self):
+        return 1.0 / (DIRECT_FOLLOW_HZ if self._direct_vision() else self.follow_hz)
+
+    def _motion_settings_event(self):
+        direct = self._direct_vision()
+        self._send_sim("motion_settings", dict(
+            direct=direct, speed=255 if direct else self.follow_speed,
+            hz=DIRECT_FOLLOW_HZ if direct else self.follow_hz,
+            rate_limit=False if direct else self.rate_limit,
+            collision_avoidance=False if direct else self.collision_avoidance))
+
+    def _configure_motion(self, source=None):
+        direct = self._direct_vision(source)
+        avoidance = False if direct else self.collision_avoidance
+        self.controller.set_rate_limit(False if direct else self.rate_limit)
+        self.controller.set_collision_avoidance(avoidance)
+        if self.sender is not None:
+            self.sender.speed = 255 if direct else self.follow_speed
+            self.sender.set_collision_avoidance(avoidance)
+        if self.sim is not None:
+            self.sim.set_rate_limit(self.rate_limit)
+            self.sim.set_collision_avoidance(self.collision_avoidance)
 
     def _invalidate_input(self):
         with self._input_lock:
@@ -213,6 +243,7 @@ class HandWorker(threading.Thread):
         was_active = self.control_mode != "off"
         self.control_mode = "off"
         self.sender = None
+        self._configure_motion()
         self._invalidate_input()
         self.controller.set_state(self.controller.action())
         self._last_stalled = ()
@@ -244,6 +275,7 @@ class HandWorker(threading.Thread):
                 return
             self._pause_control()
             self.control_source = cmd[1]
+            self._configure_motion()
             self._vision_seq = -1
             self._vision_after = time.perf_counter()
             if self.sim is not None:
@@ -254,21 +286,27 @@ class HandWorker(threading.Thread):
             self.preview_mode = cmd[1]
         elif op == "follow_speed":
             self.follow_speed = max(1, min(255, int(cmd[1])))
-            if self.sender is not None:
-                self.sender.speed = self.follow_speed
+            self._configure_motion()
+            self._motion_settings_event()
             self._send_sim("log", f"真机速度: {self.follow_speed}/255")
         elif op == "rate_limit":
             self.rate_limit = bool(cmd[1])
-            self.controller.set_rate_limit(self.rate_limit)
-            if self.sim is not None:
-                self.sim.set_rate_limit(self.rate_limit)
+            self._configure_motion()
+            self._motion_settings_event()
             self._send_sim("log", "软件插值限速已" + ("开启" if self.rate_limit else "关闭")
-                           + "；机械互锁和电流保护继续生效")
+                           + "；原样全速模式固定关闭")
+        elif op == "collision_avoidance":
+            self.collision_avoidance = bool(cmd[1])
+            self._configure_motion()
+            self._motion_settings_event()
+            self._send_sim("log", "拇指避让已" + ("开启" if self.collision_avoidance else "关闭")
+                           + "；原样全速模式固定关闭，电流保护独立生效")
         elif op == "follow_hz":
             value = int(cmd[1])
             if not 30 <= value <= 60:
                 raise ValueError("控制目标频率范围为 30–60 Hz")
             self.follow_hz = value
+            self._motion_settings_event()
             self._send_sim("log", f"控制目标频率: {value} Hz；实际频率取决于通信和识别耗时")
         elif op == "vision_start":
             self._start_vision(*cmd[1:])
@@ -303,6 +341,7 @@ class HandWorker(threading.Thread):
             return
         try:
             source = self.sim if mode == "follow" else self.controller
+            self._configure_motion(mode)
             source.push_external(None)
             align_control_to_hand(source, self.cal, self.hand)
             self.controller.set_state(source.action())
@@ -312,7 +351,11 @@ class HandWorker(threading.Thread):
             self._control_t = time.monotonic()
             if self._task_cancel.is_set():
                 return
-            self.sender = SafeSender(self.cal, source, speed=self.follow_speed,
+            direct = self._direct_vision(mode)
+            self.sender = SafeSender(self.cal, source, speed=255 if direct else self.follow_speed,
+                                     deadband=0 if direct else DEADBAND,
+                                     collision_avoidance=False if direct else self.collision_avoidance,
+                                     stop_on_stall=direct,
                                      stagger_currents=True, monitor_period=0,
                                      on_warn=lambda msg: self._send_sim("warn", msg))
             self.control_source = mode
@@ -323,7 +366,7 @@ class HandWorker(threading.Thread):
             self._pause_control(f"启用控制失败: {exc}")
 
     def _start_vision(self, source, loop=True, preview=False, mirror=False, handedness="any",
-                      retargeting="hybrid"):
+                      retargeting="direct"):
         if VisionSource is None:
             self._send_sim("vision_error", f"视觉模块不可用: {VISION_IMPORT_ERROR}")
             return
@@ -339,6 +382,9 @@ class HandWorker(threading.Thread):
                                   retargeting=retargeting, calibration=self.cal,
                                   on_event=lambda kind, *args: self.put(("vision_event", vision, kind, args)))
             self.vision = vision
+            self.vision_retargeting = retargeting
+            self._configure_motion()
+            self._motion_settings_event()
             self._vision_seq = -1
             self._vision_after = time.perf_counter()
             self._send_sim("vision_starting")
@@ -388,6 +434,7 @@ class HandWorker(threading.Thread):
                           on_event=lambda kind, *args: self.put(("sim_event", sim, kind, args)))
             sim.set_state(self.controller.action())
             sim.set_rate_limit(self.rate_limit)
+            sim.set_collision_avoidance(self.collision_avoidance)
             self.sim = sim
             self._send_sim("starting")
             sim.start()
@@ -716,6 +763,8 @@ class App(tk.Tk):
         self.follow_speed_var = tk.StringVar(value=str(FOLLOW_SPEED))
         self.follow_hz_var = tk.StringVar(value=str(FOLLOW_HZ))
         self.rate_limit_var = tk.BooleanVar(value=False)
+        self.collision_avoidance_var = tk.BooleanVar(value=True)
+        self._direct_follow_settings = False
         self.sim_status_label = None
         self.control_mode_combo = None
         self.sim_sliders = []
@@ -729,7 +778,7 @@ class App(tk.Tk):
         self._camera_busy = False
         self.vision_mirror_var = tk.BooleanVar(value=True)
         self.vision_hand_var = tk.StringVar(value="自动")
-        self.vision_retarget_var = tk.StringVar(value="指尖优化")
+        self.vision_retarget_var = tk.StringVar(value="原样全速")
         self._preview_source = None
         self._preview_seq = 0
         self._preview_image = None
@@ -972,16 +1021,23 @@ class App(tk.Tk):
         speed_row = ttk.Frame(box)
         speed_row.pack(fill="x", padx=6, pady=3)
         ttk.Label(speed_row, text="真机速度（1–255）").pack(side="left")
-        ttk.Spinbox(speed_row, from_=1, to=255, width=5,
-                    textvariable=self.follow_speed_var).pack(side="left", padx=4)
-        ttk.Button(speed_row, text="应用速度", command=self._apply_follow_speed).pack(side="left")
+        self.follow_speed_spin = ttk.Spinbox(speed_row, from_=1, to=255, width=5,
+                                             textvariable=self.follow_speed_var)
+        self.follow_speed_spin.pack(side="left", padx=4)
+        self.follow_speed_apply_btn = ttk.Button(speed_row, text="应用速度", command=self._apply_follow_speed)
+        self.follow_speed_apply_btn.pack(side="left")
         self.rate_limit_check = ttk.Checkbutton(speed_row, text="软件插值限速",
             variable=self.rate_limit_var,
             command=lambda: self.worker.put(("rate_limit", self.rate_limit_var.get())))
         self.rate_limit_check.pack(side="left", padx=8)
+        self.collision_avoidance_check = ttk.Checkbutton(speed_row, text="拇指避让",
+            variable=self.collision_avoidance_var,
+            command=lambda: self.worker.put(("collision_avoidance", self.collision_avoidance_var.get())))
+        self.collision_avoidance_check.pack(side="left", padx=4)
         ttk.Label(speed_row, text="目标频率 Hz").pack(side="left", padx=(8, 0))
-        ttk.Spinbox(speed_row, from_=30, to=60, width=4,
-                    textvariable=self.follow_hz_var).pack(side="left", padx=4)
+        self.follow_hz_spin = ttk.Spinbox(speed_row, from_=30, to=60, width=4,
+                                        textvariable=self.follow_hz_var)
+        self.follow_hz_spin.pack(side="left", padx=4)
         self.follow_hz_apply_btn = ttk.Button(speed_row, text="应用频率", command=self._apply_follow_hz)
         self.follow_hz_apply_btn.pack(side="left")
 
@@ -1050,16 +1106,17 @@ class App(tk.Tk):
         self.vision_mirror_check = ttk.Checkbutton(row, text="镜像预览", variable=self.vision_mirror_var)
         self.vision_mirror_check.pack(side="left", padx=4)
         status = ttk.Frame(box)
-        status.pack(fill="x", padx=6, pady=(0, 5))
-        self.vision_status_label = ttk.Label(status, text="未启动", foreground="#555")
-        self.vision_status_label.pack(side="left", padx=(0, 12))
+        status.pack(fill="x", padx=6, pady=(0, 2))
+        ttk.Label(status, text="跟随模式").pack(side="left")
         self.vision_retarget_combo = ttk.Combobox(status, textvariable=self.vision_retarget_var,
-            values=("指尖优化", "原有映射"), state="readonly", width=9)
+            values=("原样全速", "指尖优化", "原有映射"), state="readonly", width=9)
         self.vision_retarget_combo.pack(side="left", padx=3)
         self.vision_enable_btn = ttk.Button(status, text="启用视觉控制",
                                             command=lambda: self.worker.put(("control_mode", "vision")))
         self.vision_enable_btn.pack(side="right", padx=3)
-        ttk.Label(status, text="识别就绪后连接并启用；无需启动仿真", foreground="#555").pack(side="right", padx=8)
+        ttk.Label(status, text="原样全速：255 · 60 Hz · 无滤波/避让", foreground="#555").pack(side="right", padx=8)
+        self.vision_status_label = ttk.Label(box, text="未启动", foreground="#555")
+        self.vision_status_label.pack(fill="x", padx=6, pady=(0, 5))
         if VisionSource is None:
             self.vision_status_label.config(text=f"不可用: {VISION_IMPORT_ERROR}", foreground="#b00")
 
@@ -1200,7 +1257,7 @@ class App(tk.Tk):
         self.worker.put(("vision_start", source, self.vision_loop_var.get(), False,
                          self.vision_mirror_var.get(),
                          {"自动": "any", "左手": "Left", "右手": "Right"}[self.vision_hand_var.get()],
-                         {"指尖优化": "hybrid", "原有映射": "features"}[self.vision_retarget_var.get()]))
+                         {"原样全速": "direct", "指尖优化": "hybrid", "原有映射": "features"}[self.vision_retarget_var.get()]))
 
     def _set_vision_controls(self, running):
         if self._closing:
@@ -1334,6 +1391,10 @@ class App(tk.Tk):
         manual = self.control_source_var.get() != "视觉输入"
         self._set_sliders_enabled(ready and manual)
         self.preview_mode_combo.configure(state="disabled" if self.control_source_var.get() == "仿真调试" else "readonly")
+        for widget in (self.follow_speed_spin, self.follow_speed_apply_btn,
+                       self.rate_limit_check, self.collision_avoidance_check,
+                       self.follow_hz_spin, self.follow_hz_apply_btn):
+            widget.state(["disabled" if self._direct_follow_settings else "!disabled"])
         if not idle:
             self.control_status_label.config(text="抓握任务占用控制权", foreground="#b60")
 
@@ -1608,6 +1669,16 @@ class App(tk.Tk):
                                              foreground="#555" if mode == "off" else "green")
             self._refresh_task_controls()
             self._log_append(CONTROL_LABELS[mode])
+        elif kind == "motion_settings":
+            settings = payload[1]
+            self._direct_follow_settings = settings["direct"]
+            self.follow_speed_var.set(str(settings["speed"]))
+            self.follow_hz_var.set(str(settings["hz"]))
+            self.rate_limit_var.set(settings["rate_limit"])
+            self.collision_avoidance_var.set(settings["collision_avoidance"])
+            if self._direct_follow_settings and self.control_mode_var.get() == "vision":
+                self.control_status_label.config(text="视觉原样全速 · 六路同步 · 255", foreground="green")
+            self._refresh_control_widgets()
         elif kind == "pose":
             # 接管 / 视觉目标已按统一关节顺序排列，回显不生成输入命令。
             self._set_sliders(payload[1])
@@ -1660,6 +1731,8 @@ class App(tk.Tk):
                     label = "画面中断"
                 label += f" · {state['fps']:.1f} fps · 处理 {state['latency_ms']:.0f} ms"
                 retarget = state.get("retargeting", {})
+                if retarget.get("mode") == "direct":
+                    label += " · 原样全速"
                 if retarget.get("state") == "fallback":
                     label += " · 原有映射回退"
             self.vision_status_label.config(text=label,

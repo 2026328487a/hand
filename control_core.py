@@ -9,7 +9,11 @@ import threading
 import time
 import numpy as np
 from calibration import Calibration
-from gestures import THUMB_BEND_SAFE, THUMB_ROT_MOVE, resolve
+from gestures import resolve
+from collision_avoidance import (CommandAvoidance, FeedbackAvoidance,
+                                 THUMB_BEND_SAFE, THUMB_ROT_MOVE, THUMB_BEND_MAX,
+                                 FINGER_GATE_TOL, FINGER_LAG_COUNTS,
+                                 THUMB_BEND_WHILE_MOVING)
 from rohand import MOTOR_CN, N_MOTORS, ROHand
 from joint_mapping import (SIM_TO_REAL, build_pose, reorder_real_to_sim,
                            reorder_sim_to_real)
@@ -28,37 +32,21 @@ CURRENT_WARN_MA = 400    # 同 gestures.py:正常运动 <180mA,顶限位/夹住�
 STALL_MA = 450           # 判「顶住了」的电流。真机实测自由运动峰值 145mA,
                          # 出厂单路上限 1199mA,450 两头都有余量
 STALL_RELEASE = 1500     # counts。目标要退回这么多才解除钉住,避免在阈值上抖
-THUMB_BEND_MAX = 0.90    # 拇指弯曲的可用上限。实测四指全闭、rot=0.85/1.00 时,
-                         # bend 到 0.90 只有 55/114mA,到 0.95 就跳到 803/1155mA
-                         # —— 而且实际只走到 0.93,撞的是拇指自己的限位。
-                         # 0.90 以上没有可用行程,只有堵转。
-FINGER_GATE_TOL = 0.05   # 四指「已就位」的判据,见 _advance 里的顺序互锁
-FINGER_LAG_COUNTS = 2000 # 约 0.03 归一化。真机四指落后指令这么多就认为"还在
-                         # 半路上"。取小值是为了**早介入** —— 取 4000 时实测
-                         # 拇指已经压到 0.59 才关闸,晚了,食指照样 1172mA。
-THUMB_BEND_WHILE_MOVING = 0.30
-                         # 四指还在闭合时,拇指弯曲的封顶值。实测拇指旋转 1.00
-                         # 下先把弯曲预置到 X 再收四指:
-                         #   0.15 → 食指 1.00 / 82mA      正常
-                         #   0.30 → 食指 1.00 / 84mA      正常
-                         #   0.45 → 食指 1.00 / 574mA     开始蹭
-                         #   0.60 → 食指 0.45 / 996mA     卡死
-                         # 注意是**封顶**而不是冻结在当前值:冻结挡不住"趁四指
-                         # 还没落后就先压下去"这条路径。
 
 
 class MotionController:
     """Thread-safe target mailbox and motion planner; never opens hardware."""
 
-    def __init__(self, slew=DEFAULT_SLEW, *, rate_limit=True):
+    def __init__(self, slew=DEFAULT_SLEW, *, rate_limit=True, collision_avoidance=True):
         self.slew = slew
         self.rate_limit = bool(rate_limit)
+        self.collision_avoidance = bool(collision_avoidance)
+        self._avoidance = CommandAvoidance()
         self._lock = threading.Lock()
         self._target = np.zeros(N_MOTORS)
         self._ctrl = np.zeros(N_MOTORS)
         self._script = []
         self._dwell = 0.0
-        self._interlock = False
         self._external = None
 
     @staticmethod
@@ -93,52 +81,30 @@ class MotionController:
             cur = self._ctrl
             eff = self._target.copy()
 
-            # 拇指让位互锁。拇指旋转会把拇指扫过掌心,此时若拇指还弯着,就是
-            # 蹭着四指侧面硬扫过去(实测 thumb_rot 冲到 434mA,空载只有 0-172)。
-            # gestures.py 靠分步避开,这里是连续控制,只能做成互锁。
-            #
-            # **必须锁存**:不锁存的话,弯曲一降到阈值以下互锁就解除、目标又把
-            # 它拉回去,于是在阈值上下抖,而旋转始终走不动。所以一旦触发就咬住,
-            # 直到旋转真的转到位才松开。
-            gap = abs(self._target[SIM_TR] - cur[SIM_TR])
-            if self._interlock:
-                if gap <= THUMB_ROT_MOVE * 0.5:
-                    self._interlock = False
-            elif cur[SIM_TB] > THUMB_BEND_SAFE and gap > THUMB_ROT_MOVE:
-                self._interlock = True
-            if self._interlock:
-                eff[SIM_TB] = 0.0                      # 先把拇指松开
-                if cur[SIM_TB] > THUMB_BEND_SAFE:
-                    eff[SIM_TR] = cur[SIM_TR]          # 还没让开,旋转先等着
+            if self.collision_avoidance:
+                eff = self._avoidance.apply(eff, cur)
 
-            # 顺序互锁:四指还在往闭合方向走的时候,不许拇指往下压。
-            #
-            # 这是**顺序**问题,不是限幅问题 —— 真机实测同一个终点(四指 1.0 /
-            # rot 1.0 / bend 0.85):
-            #     六路同时冲 → 食指卡在 0.52、拇指只到 0.54,峰值 1072/777mA
-            #     分步到位   → 食指 1.00、拇指 0.85,峰值 47/89mA
-            # 差 23 倍,而两者的限幅完全一样。拇指在四指还没就位时就插进去,
-            # 就是互相卡死;等四指到位再压上去,只是搭在上面。gestures.py 的
-            # fist 之所以没事,靠的正是这个分步,不只是它用了 0.75。
-            #
-            # 只拦「压下去」,收回随时允许 —— 让位永远不该被推迟。
-            # 判据用**指令**收敛而不是真机到位:指令一定会在有限时间内收敛到
-            # 目标,所以不会死锁(真机被挡住时拇指就一直等着,这是安全侧)。
-            if float(np.max(self._target[SIM_IX:SIM_LT + 1]
-                            - cur[SIM_IX:SIM_LT + 1])) > FINGER_GATE_TOL:
-                eff[SIM_TB] = min(eff[SIM_TB], THUMB_BEND_WHILE_MOVING)
-            eff[SIM_TB] = min(eff[SIM_TB], THUMB_BEND_MAX)
-
-            step = self.slew * dt if self.rate_limit else 1.0
-            self._ctrl = np.clip(cur + np.clip(eff - cur, -step, step), 0.0, 1.0)
+            if self.rate_limit:
+                step = self.slew * dt
+                self._ctrl = np.clip(cur + np.clip(eff - cur, -step, step), 0.0, 1.0)
+            else:
+                self._ctrl = eff.copy()
             return self._ctrl.copy()
 
     # ---------------- 外部接口(线程安全) ----------------
 
     def set_rate_limit(self, enabled):
-        """Toggle optional target interpolation; mechanical guards still apply."""
+        """Toggle interpolation independently of the optional avoidance policy."""
         with self._lock:
             self.rate_limit = bool(enabled)
+
+    def set_collision_avoidance(self, enabled):
+        """Toggle optional pose changes independently of interpolation/current protection."""
+        with self._lock:
+            if self.collision_avoidance == bool(enabled):
+                return
+            self.collision_avoidance = bool(enabled)
+            self._avoidance.reset()
 
     def set_target(self, norms_sim):
         """设定目标姿态(归一化,仿真序)。会打断正在播的手势。"""
@@ -168,7 +134,7 @@ class MotionController:
         with self._lock:
             self._script.clear()
             self._dwell = 0.0
-            self._interlock = False
+            self._avoidance.reset()
             self._ctrl = v.copy()
             self._target = v.copy()
 
@@ -223,7 +189,8 @@ class MotionController:
             return {
                 "action": self._ctrl.copy(),
                 "target": self._target.copy(),
-                "interlock": self._interlock,
+                "interlock": self._avoidance.interlock,
+                "collision_avoidance": self.collision_avoidance,
                 "script": len(self._script),
                 "external": self._external is not None,
                 "rate_limit": self.rate_limit,
@@ -252,9 +219,13 @@ class SafeSender:
                  mode: str = "normalized", speed: int = DEFAULT_SPEED,
                  deadband: int = DEADBAND, stall_ma: int = STALL_MA,
                  monitor_period: float = 0.04, on_warn=None,
-                 stagger_currents: bool = False):
+                 stagger_currents: bool = False, collision_avoidance: bool = True,
+                 stop_on_stall: bool = False):
         self.cal = cal
         self.sync = sync
+        self.collision_avoidance = bool(collision_avoidance)
+        self.stop_on_stall = bool(stop_on_stall)
+        self._avoidance = FeedbackAvoidance()
         self.mode = mode
         # slew 限制的是离散目标变化量，不是电机速度；满速追短目标可能走停。
         self.speed = speed
@@ -270,7 +241,6 @@ class SafeSender:
         self.positions = [0] * N_MOTORS  # 最近一次读到的真机位置
         self.stalled: list = []          # 当前被钉住的电机 index,给界面看
         self.waiting_thumb = False       # 拇指是否正在等四指跟上
-        self._rotation_clearance = False
         self._clamp: list = [None] * N_MOTORS
         self._last_pose = None
         self._last_speed = None
@@ -324,6 +294,9 @@ class SafeSender:
                 if self.stagger_currents:
                     self._current_group = 0 if self._current_group is None else 1 - self._current_group
                 hot = [i for i in sampled if cur[i] > self.stall_ma]
+                if hot and self.stop_on_stall:
+                    names = "、".join(f"{MOTOR_CN[i]} {cur[i]}mA" for i in hot)
+                    raise RuntimeError(f"原样跟随过流（{names}），已停止全部六路；请退回姿态后重新启用")
                 for i in hot:
                     new = (pos[i] if self._clamp[i] is None
                            else min(self._clamp[i], pos[i]))
@@ -347,35 +320,18 @@ class SafeSender:
                 out[i] = c
         self.stalled = [i for i, c in enumerate(self._clamp) if c is not None]
 
-        # 顺序闸门(真机侧)。SimSync 里那道只看**指令**是否收敛,在目标被逐帧
-        # 更新时(视频驱动)几乎永远是开的 —— 实测视频跑到握拳那一帧时,仿真
-        # ctrl 食指 0.98 而真机只有 0.46,闸门开着,拇指就压下来卡住了,食指
-        # 1174mA。危险是物理的,所以这道闸门必须看真机的实际落后量。
-        #
-        # 只拦「往下压」,收回随时允许。
-        tb = SIM_TO_REAL[SIM_TB]
-        fingers = [SIM_TO_REAL[s] for s in range(4)]
-        lag = max(want[r] - self.positions[r] for r in fingers)
-        self.waiting_thumb = lag > FINGER_LAG_COUNTS
-        if self.waiting_thumb:
-            out[tb] = min(out[tb],
-                          self.cal.pos_from_norm(tb, THUMB_BEND_WHILE_MOVING))
-        # With interpolation disabled, a retraction command is not proof that
-        # the physical thumb has cleared. Gate rotation on measured position.
-        tr = SIM_TO_REAL[SIM_TR]
-        rotation_gap = abs(self.cal.norm_from_pos(tr, want[tr])
-                           - self.cal.norm_from_pos(tr, self.positions[tr]))
-        actual_bend = self.cal.norm_from_pos(tb, self.positions[tb])
-        if self._rotation_clearance:
-            if rotation_gap <= THUMB_ROT_MOVE * .5:
-                self._rotation_clearance = False
-        elif actual_bend > THUMB_BEND_SAFE and rotation_gap > THUMB_ROT_MOVE:
-            self._rotation_clearance = True
-        if self._rotation_clearance:
-            out[tb] = self.cal.pos_from_norm(tb, 0.)
-            if actual_bend > THUMB_BEND_SAFE:
-                out[tr] = self.positions[tr]
+        if self.collision_avoidance:
+            out = self._avoidance.apply(self.cal, want, self.positions, out)
+        self.waiting_thumb = self._avoidance.waiting_thumb
         return out
+
+    def set_collision_avoidance(self, enabled):
+        if self.collision_avoidance == bool(enabled):
+            return
+        self.collision_avoidance = bool(enabled)
+        self._avoidance.reset()
+        self.waiting_thumb = False
+        self._last_pose = None
 
     def resync(self):
         """强制下一帧无视死区,并清掉钉住状态。切换映射模式后要调。"""
@@ -383,9 +339,9 @@ class SafeSender:
         self._clamp = [None] * N_MOTORS
         self.stalled = []
         self.waiting_thumb = False
-        self._rotation_clearance = False
         self._current_group = None
         self.feedback_ready = False
+        self._avoidance.reset()
         self._cur_t = 0.0
 
 
